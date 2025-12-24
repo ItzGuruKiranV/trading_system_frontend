@@ -127,7 +127,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     // Create the chart with dark theme styling
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
-      height: height,
+      height: 500,
       layout: {
         background: { color: 'transparent' },
         textColor: 'hsl(215 20% 55%)',
@@ -164,6 +164,10 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         borderColor: 'hsl(222 30% 18%)',
         timeVisible: true,
         secondsVisible: false,
+
+        rightBarStaysOnScroll: true,
+        fixRightEdge: true,
+        fixLeftEdge: false,
       },
       handleScale: {
         axisPressedMouseMove: true,

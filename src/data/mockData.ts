@@ -8,7 +8,7 @@ export const tradingPairs = [
   { symbol: 'USDCAD', name: 'US Dollar / Canadian Dollar', price: 1.3621, change: 0.05 },
   { symbol: 'NZDUSD', name: 'New Zealand Dollar / US Dollar', price: 0.5987, change: -0.22 },
   { symbol: 'USDCHF', name: 'US Dollar / Swiss Franc', price: 0.8876, change: 0.09 },
-  { symbol: 'EURGBP', name: 'Euro / British Pound', price: 0.8594, change: 0.03 },
+  { symbol: 'GBPJPY', name: 'Euro / British Pound', price: 0.8594, change: 0.03 },
 ];
 
 export const timeframes = [
