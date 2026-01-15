@@ -106,6 +106,21 @@ const Charts: React.FC = () => {
         minMove: 0.00001,
       },
     });
+    /* ---------- DUMMY PRICE SERIES (FOR PRICE AXIS) ---------- */
+    const priceDummy = chart.addLineSeries({
+      color: 'rgba(0,0,0,0)',
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    priceDummy.setData([
+      { time: (nowSec - 60) as UTCTimestamp, value: 0 },
+      { time: nowSec as UTCTimestamp, value: 2 },
+    ]);
+
 
     /* ---------- TIME ANCHOR ---------- */
     const anchor = chart.addLineSeries({
