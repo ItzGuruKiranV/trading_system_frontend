@@ -33,7 +33,13 @@ type CandleMessage = {
 /* -------------------- HELPERS -------------------- */
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/* -------------------- CHART -------------------- */
+/* -------------------- TIME WINDOW LIMIT -------------------- */
+const MAX_VISIBLE_SECONDS =
+  9 * 24 * 60 * 60 +
+  9 * 60 * 60 +
+  50 * 60;
+
+/* -------------------- COMPONENT -------------------- */
 const Charts: React.FC = () => {
   const [pair, setPair] = useState<Pair>('EURUSD');
   const [tf, setTf] = useState<Timeframe>('5m');
@@ -45,11 +51,10 @@ const Charts: React.FC = () => {
   const candleSocketRef = useRef<WebSocket | null>(null);
   const autoScrollRef = useRef(true);
 
-  /* -------------------- INIT -------------------- */
+  /* -------------------- INIT CHART -------------------- */
   useEffect(() => {
     if (!containerRef.current) return;
 
-    /* ---------- CHART ---------- */
     const chart = createChart(containerRef.current, {
       autoSize: true,
       layout: {
@@ -66,17 +71,28 @@ const Charts: React.FC = () => {
       },
       timeScale: {
         fixRightEdge: true,
-        rightBarStaysOnScroll: true,
         borderColor: '#334155',
+        timeVisible: true,
+        secondsVisible: false,
       },
       crosshair: {
         mode: 1,
         vertLine: { color: '#475569' },
         horzLine: { color: '#475569' },
       },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+      },
     });
 
-    /* ---------- PRICE SERIES ---------- */
+    /* ---------- SERIES ---------- */
     const series = chart.addCandlestickSeries({
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -91,7 +107,7 @@ const Charts: React.FC = () => {
       },
     });
 
-    /* ---------- MASTER TIME ANCHOR ---------- */
+    /* ---------- TIME ANCHOR ---------- */
     const anchor = chart.addLineSeries({
       color: 'rgba(0,0,0,0)',
       priceLineVisible: false,
@@ -102,16 +118,33 @@ const Charts: React.FC = () => {
 
     const START = Date.UTC(2020, 0, 1) / 1000;
     const END = Date.UTC(2026, 11, 31, 23, 59) / 1000;
-    const DAY = 86400;
+    const STEP = 5 * 60;
 
     const anchorData = [];
-    for (let t = START; t <= END; t += DAY) {
+    for (let t = START; t <= END; t += STEP) {
       anchorData.push({ time: t as UTCTimestamp, value: 1 });
     }
-
     anchor.setData(anchorData);
 
-    /* ---------- TRADINGVIEW X-AXIS ---------- */
+    /* ---------- INITIAL WINDOW ---------- */
+    const now = Math.floor(Date.now() / 1000);
+    chart.timeScale().setVisibleRange({
+      from: (now - MAX_VISIBLE_SECONDS) as UTCTimestamp,
+      to: now as UTCTimestamp,
+    });
+
+    /* ---------- CLAMP ZOOM OUT ---------- */
+    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+      if (!range) return;
+      if (range.to - range.from > MAX_VISIBLE_SECONDS) {
+        chart.timeScale().setVisibleRange({
+          from: (range.to - MAX_VISIBLE_SECONDS) as UTCTimestamp,
+          to: range.to as UTCTimestamp,
+        });
+      }
+    });
+
+    /* ---------- X AXIS FORMAT ---------- */
     chart.timeScale().applyOptions({
       tickMarkFormatter: (time: UTCTimestamp) => {
         const d = new Date(time * 1000);
@@ -126,32 +159,25 @@ const Charts: React.FC = () => {
 
         const span = range.to - range.from;
 
-        // YEARS
-        if (span > 3600 * 24 * 365 * 2) {
-          return m === 0 && day === 1 ? `${y}` : '';
-        }
-
-        // MONTHS
         if (span > 3600 * 24 * 60) {
-          return day === 1
-            ? d.toLocaleString('en', { month: 'short' })
-            : '';
+          return day === 1 ? d.toLocaleString('en', { month: 'short' }) : '';
         }
 
-        // DAYS
         if (span > 3600 * 24 * 2) {
-          return h === 0 ? `${day}` : '';
+          if (h !== 0) return '';
+          if (day === 1) {
+            return m === 0
+              ? String(y)
+              : d.toLocaleString('en', { month: 'short' });
+          }
+          return String(day);
         }
 
-        // HOURS
         if (span > 3600 * 2) {
           return min === 0 ? `${pad(h)}:00` : '';
         }
 
-        // MINUTES (5m floor)
-        return min % 5 === 0
-          ? `${pad(h)}:${pad(min)}`
-          : '';
+        return min % 5 === 0 ? `${pad(h)}:${pad(min)}` : '';
       },
     });
 
@@ -164,10 +190,11 @@ const Charts: React.FC = () => {
   /* -------------------- SOCKETS -------------------- */
   useEffect(() => {
     if (!seriesRef.current) return;
-    candleSocketRef.current?.close();
 
+    candleSocketRef.current?.close();
     const ws = new WebSocket(API_BASE_URL.replace('http', 'ws') + '/ws/candles');
     candleSocketRef.current = ws;
+
     ws.onopen = () => ws.send(JSON.stringify({ symbol: pair, tf }));
 
     ws.onmessage = e => {
@@ -182,8 +209,9 @@ const Charts: React.FC = () => {
         close: m.close,
       });
 
-      if (autoScrollRef.current)
+      if (autoScrollRef.current) {
         chartRef.current?.timeScale().scrollToRealTime();
+      }
     };
 
     return () => ws.close();
@@ -197,7 +225,9 @@ const Charts: React.FC = () => {
 
         <div className="flex gap-3">
           <Select value={pair} onValueChange={v => setPair(v as Pair)}>
-            <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {tradingPairs.map(p => (
                 <SelectItem key={p} value={p}>{p}</SelectItem>
@@ -206,7 +236,9 @@ const Charts: React.FC = () => {
           </Select>
 
           <Select value={tf} onValueChange={v => setTf(v as Timeframe)}>
-            <SelectTrigger className="w-[80px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[80px]">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="5m">5M</SelectItem>
               <SelectItem value="4h">4H</SelectItem>
