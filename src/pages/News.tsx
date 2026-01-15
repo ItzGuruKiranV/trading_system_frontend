@@ -15,12 +15,14 @@
  * ============================================================
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo , useEffect} from 'react';
 import { Newspaper, Clock, AlertTriangle, Filter, TrendingUp, Globe } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { TradingCard } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { API_BASE_URL } from '@/config/api';
+
 
 /**
  * News impact levels
@@ -42,91 +44,6 @@ interface NewsEvent {
   previous?: string;
 }
 
-/**
- * Mock news data
- * In production, this would come from an API
- */
-const MOCK_NEWS: NewsEvent[] = [
-  {
-    id: '1',
-    time: '08:30',
-    date: '2024-12-23',
-    currency: 'USD',
-    impact: 'HIGH',
-    title: 'Core PCE Price Index m/m',
-    actual: '0.1%',
-    forecast: '0.2%',
-    previous: '0.3%',
-  },
-  {
-    id: '2',
-    time: '10:00',
-    date: '2024-12-23',
-    currency: 'USD',
-    impact: 'MEDIUM',
-    title: 'New Home Sales',
-    forecast: '730K',
-    previous: '738K',
-  },
-  {
-    id: '3',
-    time: '14:00',
-    date: '2024-12-23',
-    currency: 'EUR',
-    impact: 'HIGH',
-    title: 'ECB Monetary Policy Statement',
-  },
-  {
-    id: '4',
-    time: '02:00',
-    date: '2024-12-24',
-    currency: 'JPY',
-    impact: 'HIGH',
-    title: 'BOJ Policy Rate Decision',
-    forecast: '0.10%',
-    previous: '0.10%',
-  },
-  {
-    id: '5',
-    time: '09:30',
-    date: '2024-12-24',
-    currency: 'GBP',
-    impact: 'MEDIUM',
-    title: 'Final GDP q/q',
-    forecast: '-0.1%',
-    previous: '0.0%',
-  },
-  {
-    id: '6',
-    time: '04:30',
-    date: '2024-12-24',
-    currency: 'AUD',
-    impact: 'LOW',
-    title: 'Private Capital Expenditure q/q',
-    forecast: '0.5%',
-    previous: '0.6%',
-  },
-  {
-    id: '7',
-    time: '08:30',
-    date: '2024-12-24',
-    currency: 'CAD',
-    impact: 'MEDIUM',
-    title: 'GDP m/m',
-    forecast: '0.2%',
-    previous: '0.1%',
-  },
-  {
-    id: '8',
-    time: '07:00',
-    date: '2024-12-24',
-    currency: 'CHF',
-    impact: 'LOW',
-    title: 'Trade Balance',
-    forecast: '5.2B',
-    previous: '4.9B',
-  },
-];
 
 /**
  * Currency options for filtering
@@ -158,16 +75,30 @@ const getImpactStyle = (impact: ImpactLevel) => {
  * News Page Component
  */
 const News: React.FC = () => {
+  const [news, setNews] = useState<NewsEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+
+
   // Filter state
   const [selectedCurrency, setSelectedCurrency] = useState<string>('ALL');
   const [selectedImpact, setSelectedImpact] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/news`)
+      .then(res => res.json())
+      .then(data => {
+        console.log("NEWS FROM API 👉", data);
+        setNews(data);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
   /**
    * Filter news based on selected criteria
    */
   const filteredNews = useMemo(() => {
-    return MOCK_NEWS.filter((news) => {
+    return news.filter((news) => {
       // Currency filter
       if (selectedCurrency !== 'ALL' && news.currency !== selectedCurrency) {
         return false;
@@ -279,87 +210,94 @@ const News: React.FC = () => {
       </TradingCard>
 
       {/* News List */}
-      <div className="space-y-6">
-        {Object.keys(groupedNews).length === 0 ? (
-          <TradingCard className="text-center py-12">
-            <Newspaper className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-            <p className="text-muted-foreground">No events found matching your criteria</p>
-          </TradingCard>
-        ) : (
-          Object.entries(groupedNews)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, events]) => (
-              <div key={date}>
-                {/* Date Header */}
-                <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-primary" />
-                  {formatDate(date)}
-                </h2>
+<div className="space-y-6">
+  {loading ? (
+    <TradingCard className="text-center py-12">
+      Loading news...
+    </TradingCard>
+  ) : Object.keys(groupedNews).length === 0 ? (
+    <TradingCard className="text-center py-12">
+      <Newspaper className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+      <p className="text-muted-foreground">No events found matching your criteria</p>
+    </TradingCard>
+  ) : (
+    Object.entries(groupedNews)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, events]) => (
+        <div key={date}>
+          {/* Date Header */}
+          <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-primary" />
+            {formatDate(date)}
+          </h2>
 
-                {/* Events */}
-                <div className="space-y-3">
-                  {events.map((event) => (
-                    <TradingCard
-                      key={event.id}
-                      className="hover:border-primary/30 transition-colors"
-                    >
-                      <div className="flex flex-col md:flex-row md:items-center gap-4">
-                        {/* Time & Currency */}
-                        <div className="flex items-center gap-4 md:w-32">
-                          <span className="font-mono text-muted-foreground">
-                            {event.time}
-                          </span>
-                          <Badge variant="outline" className="font-semibold">
-                            {event.currency}
-                          </Badge>
-                        </div>
+    {events.map((event) => (
+      <TradingCard
+        key={event.id}
+        className="hover:border-primary/30 transition-colors"
+      >
+        <div className="flex flex-col md:flex-row md:items-center gap-4 p-4">
 
-                        {/* Impact */}
-                        <div className="md:w-24">
-                          <Badge className={getImpactStyle(event.impact)}>
-                            {event.impact}
-                          </Badge>
-                        </div>
+          {/* Time & Currency */}
+          <div className="flex items-center gap-4 md:w-32">
+            <span className="font-mono text-muted-foreground">
+              {event.time}
+            </span>
+            <Badge variant="outline" className="font-semibold">
+              {event.currency}
+            </Badge>
+          </div>
 
-                        {/* Title */}
-                        <div className="flex-1">
-                          <p className="font-medium text-foreground">{event.title}</p>
-                        </div>
+          {/* Impact */}
+          <div className="md:w-24">
+            <Badge className={getImpactStyle(event.impact)}>
+              {event.impact}
+            </Badge>
+          </div>
 
-                        {/* Values */}
-                        <div className="flex items-center gap-6 text-sm">
-                          {event.actual !== undefined && (
-                            <div>
-                              <span className="text-muted-foreground">Actual: </span>
-                              <span className="font-mono text-success font-semibold">
-                                {event.actual}
-                              </span>
-                            </div>
-                          )}
-                          {event.forecast !== undefined && (
-                            <div>
-                              <span className="text-muted-foreground">Forecast: </span>
-                              <span className="font-mono text-foreground">
-                                {event.forecast}
-                              </span>
-                            </div>
-                          )}
-                          {event.previous !== undefined && (
-                            <div>
-                              <span className="text-muted-foreground">Previous: </span>
-                              <span className="font-mono text-muted-foreground">
-                                {event.previous}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </TradingCard>
-                  ))}
-                </div>
+          {/* Title */}
+          <div className="flex-1">
+            <p className="font-medium text-foreground">
+              {event.title}
+            </p>
+          </div>
+
+          {/* Values */}
+          <div className="flex items-center gap-6 text-sm">
+            {event.actual && (
+              <div>
+                <span className="text-muted-foreground">Actual: </span>
+                <span className="font-mono text-success font-semibold">
+                  {event.actual}
+                </span>
               </div>
-            ))
-        )}
+            )}
+            {event.forecast && (
+              <div>
+                <span className="text-muted-foreground">Forecast: </span>
+                <span className="font-mono text-foreground">
+                  {event.forecast}
+                </span>
+              </div>
+            )}
+            {event.previous && (
+              <div>
+                <span className="text-muted-foreground">Previous: </span>
+                <span className="font-mono text-muted-foreground">
+                  {event.previous}
+                </span>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </TradingCard>
+    ))}
+
+        </div>
+      ))
+  )}
+
       </div>
 
       {/* Disclaimer */}
