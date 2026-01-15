@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ISeriesApi, LineStyle, UTCTimestamp } from 'lightweight-charts';
+import { createChart, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { API_BASE_URL } from '@/config/api';
 
 import {
@@ -30,14 +30,8 @@ type CandleMessage = {
   close: number;
 };
 
-type MarketEventType = 'BOS' | 'PULLBACK_CONFIRMED' | 'CHOCH';
-type MarketEvent = { id: string; type: MarketEventType; broken_level: number; time: string };
-type MarketMessage = { symbol: Pair; timeframe: Timeframe; events: MarketEvent[] };
-
 /* -------------------- HELPERS -------------------- */
 const pad = (n: number) => String(n).padStart(2, '0');
-const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 /* -------------------- CHART -------------------- */
 const Charts: React.FC = () => {
@@ -49,27 +43,28 @@ const Charts: React.FC = () => {
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const candleSocketRef = useRef<WebSocket | null>(null);
-  const marketSocketRef = useRef<WebSocket | null>(null);
   const autoScrollRef = useRef(true);
-  const marketDrawingsRef = useRef<Record<string, { line: any; lastType: MarketEventType }>>({});
 
   /* -------------------- INIT -------------------- */
   useEffect(() => {
     if (!containerRef.current) return;
 
+    /* ---------- CHART ---------- */
     const chart = createChart(containerRef.current, {
       autoSize: true,
-      layout: { background: { color: '#020617' }, textColor: '#cbd5e1' },
+      layout: {
+        background: { color: '#020617' },
+        textColor: '#cbd5e1',
+      },
       grid: {
-        vertLines: { color: '#1e293b', visible: true },
-        horzLines: { color: '#1e293b', visible: true },
+        vertLines: { color: '#1e293b' },
+        horzLines: { color: '#1e293b' },
       },
       rightPriceScale: {
         borderColor: '#334155',
         scaleMargins: { top: 0.15, bottom: 0.15 },
       },
       timeScale: {
-        barSpacing: 10,
         fixRightEdge: true,
         rightBarStaysOnScroll: true,
         borderColor: '#334155',
@@ -81,6 +76,7 @@ const Charts: React.FC = () => {
       },
     });
 
+    /* ---------- PRICE SERIES ---------- */
     const series = chart.addCandlestickSeries({
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -88,10 +84,14 @@ const Charts: React.FC = () => {
       borderDownColor: '#ef4444',
       wickUpColor: '#22c55e',
       wickDownColor: '#ef4444',
-      priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+      priceFormat: {
+        type: 'price',
+        precision: 5,
+        minMove: 0.00001,
+      },
     });
 
-    /* ---------- TIME ANCHOR ---------- */
+    /* ---------- MASTER TIME ANCHOR ---------- */
     const anchor = chart.addLineSeries({
       color: 'rgba(0,0,0,0)',
       priceLineVisible: false,
@@ -100,81 +100,60 @@ const Charts: React.FC = () => {
       priceScaleId: '',
     });
 
-    const step = 5 * 60;
-    const start = Date.UTC(2020, 0, 15) / 1000;
-    const end   = Date.UTC(2026, 0, 15, 23, 55) / 1000;
+    const START = Date.UTC(2020, 0, 1) / 1000;
+    const END = Date.UTC(2026, 11, 31, 23, 59) / 1000;
+    const DAY = 86400;
 
-    const data = [];
-    for (let t = start; t <= end; t += step)
-      data.push({ time: t as UTCTimestamp, value: 1 });
+    const anchorData = [];
+    for (let t = START; t <= END; t += DAY) {
+      anchorData.push({ time: t as UTCTimestamp, value: 1 });
+    }
 
-    anchor.setData(data);
-    chart.timeScale().setVisibleLogicalRange({ from: start, to: end });
+    anchor.setData(anchorData);
 
-    /* ---------- TRADINGVIEW-LIKE AXIS ---------- */
-    const applyAxisLogic = () => {
-      const range = chart.timeScale().getVisibleLogicalRange();
-      if (!range) return;
+    /* ---------- TRADINGVIEW X-AXIS ---------- */
+    chart.timeScale().applyOptions({
+      tickMarkFormatter: (time: UTCTimestamp) => {
+        const d = new Date(time * 1000);
+        const y = d.getUTCFullYear();
+        const m = d.getUTCMonth();
+        const day = d.getUTCDate();
+        const h = d.getUTCHours();
+        const min = d.getUTCMinutes();
 
-      const bars = range.to - range.from;
+        const range = chart.timeScale().getVisibleRange();
+        if (!range) return '';
 
-      // Dynamic visibility
-      chart.timeScale().applyOptions({
-        timeVisible: bars < 500,
-        secondsVisible: bars < 50,
-      });
+        const span = range.to - range.from;
 
-      chart.timeScale().applyOptions({
-        tickMarkFormatter: (time: UTCTimestamp) => {
-          const d = new Date(time * 1000);
-          const h = d.getUTCHours();
-          const m = d.getUTCMinutes();
+        // YEARS
+        if (span > 3600 * 24 * 365 * 2) {
+          return m === 0 && day === 1 ? `${y}` : '';
+        }
 
-          // ZOOM 0 — YEARS (MAX ZOOM OUT)
-          if (bars > 5000) {
-            // Show year once per year (January candles)
-            return d.getUTCMonth() === 0 && d.getUTCDate() <= 3
-              ? `${d.getUTCFullYear()}`
-              : '';
-          }
+        // MONTHS
+        if (span > 3600 * 24 * 60) {
+          return day === 1
+            ? d.toLocaleString('en', { month: 'short' })
+            : '';
+        }
 
-          // ZOOM 1 — DAYS (FEW DAYS)
-          if (bars > 1000) {
-            // Show day numbers at midnight
-            return h === 0 && m === 0
-              ? `${d.getUTCDate()}`
-              : '';
-          }
+        // DAYS
+        if (span > 3600 * 24 * 2) {
+          return h === 0 ? `${day}` : '';
+        }
 
+        // HOURS
+        if (span > 3600 * 2) {
+          return min === 0 ? `${pad(h)}:00` : '';
+        }
 
-          // ZOOM 2 — DAYS
-          if (bars > 300) {
-            return h === 0 && m === 0 ? `${d.getUTCDate()}` : '';
-          }
-
-          // ZOOM 3 — HOURS (3h)
-          if (bars > 80) {
-            return m === 0 && h % 3 === 0 ? `${pad(h)}:00` : '';
-          }
-
-          // ZOOM 4 — HOURS
-          if (bars > 30) {
-            return m === 0 ? `${pad(h)}:00` : '';
-          }
-
-          // ZOOM 5 — 15 MIN
-          if (bars > 10) {
-            return m % 15 === 0 ? `${pad(h)}:${pad(m)}` : '';
-          }
-
-          // ZOOM 6 — 5 MIN
-          return m % 5 === 0 ? `${pad(h)}:${pad(m)}` : '';
-        },
-      });
-    };
-
-    applyAxisLogic();
-    chart.timeScale().subscribeVisibleLogicalRangeChange(applyAxisLogic);
+        // MINUTES (5m floor)
+        return min % 5 === 0
+          ? `${pad(h)}:${pad(min)}`
+          : '';
+      },
+    });
 
     chartRef.current = chart;
     seriesRef.current = series;
@@ -182,7 +161,7 @@ const Charts: React.FC = () => {
     return () => chart.remove();
   }, []);
 
-  /* -------------------- SOCKETS (UNCHANGED) -------------------- */
+  /* -------------------- SOCKETS -------------------- */
   useEffect(() => {
     if (!seriesRef.current) return;
     candleSocketRef.current?.close();
@@ -215,11 +194,14 @@ const Charts: React.FC = () => {
     <div className="h-screen flex flex-col p-4">
       <div className="flex justify-between mb-4">
         <h1 className="text-xl font-bold">Charts</h1>
+
         <div className="flex gap-3">
           <Select value={pair} onValueChange={v => setPair(v as Pair)}>
             <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {tradingPairs.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              {tradingPairs.map(p => (
+                <SelectItem key={p} value={p}>{p}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
