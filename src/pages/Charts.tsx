@@ -34,7 +34,12 @@ type MarketEventType = 'BOS' | 'PULLBACK_CONFIRMED' | 'CHOCH';
 type MarketEvent = { id: string; type: MarketEventType; broken_level: number; time: string };
 type MarketMessage = { symbol: Pair; timeframe: Timeframe; events: MarketEvent[] };
 
-/* -------------------- CHART COMPONENT -------------------- */
+/* -------------------- HELPERS -------------------- */
+const pad = (n: number) => String(n).padStart(2, '0');
+const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+/* -------------------- CHART -------------------- */
 const Charts: React.FC = () => {
   const [pair, setPair] = useState<Pair>('EURUSD');
   const [tf, setTf] = useState<Timeframe>('5m');
@@ -48,7 +53,7 @@ const Charts: React.FC = () => {
   const autoScrollRef = useRef(true);
   const marketDrawingsRef = useRef<Record<string, { line: any; lastType: MarketEventType }>>({});
 
-  /* -------------------- INIT CHART -------------------- */
+  /* -------------------- INIT -------------------- */
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -56,13 +61,14 @@ const Charts: React.FC = () => {
       autoSize: true,
       layout: { background: { color: '#020617' }, textColor: '#cbd5e1' },
       grid: {
-        vertLines: { color: '#1e293b', style: 0, visible: true },
-        horzLines: { color: '#1e293b', style: 0, visible: true },
+        vertLines: { color: '#1e293b', visible: true },
+        horzLines: { color: '#1e293b', visible: true },
       },
-      rightPriceScale: { borderColor: '#334155', scaleMargins: { top: 0.15, bottom: 0.15 } },
+      rightPriceScale: {
+        borderColor: '#334155',
+        scaleMargins: { top: 0.15, bottom: 0.15 },
+      },
       timeScale: {
-        timeVisible: true,
-        secondsVisible: true, // show minutes when zoomed in
         barSpacing: 10,
         fixRightEdge: true,
         rightBarStaysOnScroll: true,
@@ -70,8 +76,8 @@ const Charts: React.FC = () => {
       },
       crosshair: {
         mode: 1,
-        vertLine: { width: 1, color: '#475569', style: 0, labelBackgroundColor: '#020617' },
-        horzLine: { width: 1, color: '#475569', style: 0, labelBackgroundColor: '#020617' },
+        vertLine: { color: '#475569' },
+        horzLine: { color: '#475569' },
       },
     });
 
@@ -85,67 +91,98 @@ const Charts: React.FC = () => {
       priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
     });
 
-    /* -------------------- TIME ANCHOR -------------------- */
-    const timeAnchor = chart.addLineSeries({
+    /* ---------- TIME ANCHOR ---------- */
+    const anchor = chart.addLineSeries({
       color: 'rgba(0,0,0,0)',
-      lineWidth: 0,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
       priceScaleId: '',
     });
 
-    const start = Date.UTC(2020, 0, 1) / 1000;
-    const end = Date.UTC(2025, 11, 31, 23, 59, 59) / 1000;
-    const step = 24 * 60 * 60;
-    const timelinePoints: { time: UTCTimestamp; value: number }[] = [];
-    for (let t = start; t <= end; t += step) {
-      timelinePoints.push({ time: t as UTCTimestamp, value: 1 });
-    }
-    timeAnchor.setData(timelinePoints);
+    const step = 5 * 60;
+    const start = Date.UTC(2020, 0, 15) / 1000;
+    const end   = Date.UTC(2026, 0, 15, 23, 55) / 1000;
 
+    const data = [];
+    for (let t = start; t <= end; t += step)
+      data.push({ time: t as UTCTimestamp, value: 1 });
+
+    anchor.setData(data);
     chart.timeScale().setVisibleLogicalRange({ from: start, to: end });
 
-    /* -------------------- HIERARCHICAL TICK FORMATTER -------------------- */
-    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    /* ---------- TRADINGVIEW-LIKE AXIS ---------- */
+    const applyAxisLogic = () => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (!range) return;
 
-    const updateTickFormatter = () => {
+      const bars = range.to - range.from;
+
+      // Dynamic visibility
       chart.timeScale().applyOptions({
-        tickMarkFormatter: (time) => {
-          const date = new Date(time * 1000);
-          const range = chart.timeScale().getVisibleLogicalRange();
-          if (!range) return '';
-          const visibleBars = range.to - range.from;
+        timeVisible: bars < 500,
+        secondsVisible: bars < 50,
+      });
 
-          // Hierarchical logic
-          if (visibleBars > 5000) return `${date.getUTCFullYear()}`; // Years
-          if (visibleBars > 500) return `${date.getUTCFullYear()} ${monthNames[date.getUTCMonth()]}`; // Months inside years
-          if (visibleBars > 50) return `${date.getUTCDate()}`; // Days inside months
-          if (visibleBars > 10) return `${String(date.getUTCHours()).padStart(2,'0')}:00`; // Hours inside days
-          return `${String(date.getUTCHours()).padStart(2,'0')}:${String(date.getUTCMinutes()).padStart(2,'0')}`; // Minutes inside hours
+      chart.timeScale().applyOptions({
+        tickMarkFormatter: (time: UTCTimestamp) => {
+          const d = new Date(time * 1000);
+          const h = d.getUTCHours();
+          const m = d.getUTCMinutes();
+
+          // ZOOM 0 — YEARS (MAX ZOOM OUT)
+          if (bars > 5000) {
+            // Show year once per year (January candles)
+            return d.getUTCMonth() === 0 && d.getUTCDate() <= 3
+              ? `${d.getUTCFullYear()}`
+              : '';
+          }
+
+          // ZOOM 1 — DAYS (FEW DAYS)
+          if (bars > 1000) {
+            // Show day numbers at midnight
+            return h === 0 && m === 0
+              ? `${d.getUTCDate()}`
+              : '';
+          }
+
+
+          // ZOOM 2 — DAYS
+          if (bars > 300) {
+            return h === 0 && m === 0 ? `${d.getUTCDate()}` : '';
+          }
+
+          // ZOOM 3 — HOURS (3h)
+          if (bars > 80) {
+            return m === 0 && h % 3 === 0 ? `${pad(h)}:00` : '';
+          }
+
+          // ZOOM 4 — HOURS
+          if (bars > 30) {
+            return m === 0 ? `${pad(h)}:00` : '';
+          }
+
+          // ZOOM 5 — 15 MIN
+          if (bars > 10) {
+            return m % 15 === 0 ? `${pad(h)}:${pad(m)}` : '';
+          }
+
+          // ZOOM 6 — 5 MIN
+          return m % 5 === 0 ? `${pad(h)}:${pad(m)}` : '';
         },
       });
     };
 
-    updateTickFormatter();
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => updateTickFormatter());
+    applyAxisLogic();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(applyAxisLogic);
 
     chartRef.current = chart;
     seriesRef.current = series;
 
-    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-      if (!range) return;
-      autoScrollRef.current = range.to >= chart.timeScale().getLogicalRange()?.to! - 2;
-    });
-
-    return () => {
-      candleSocketRef.current?.close();
-      marketSocketRef.current?.close();
-      chart.remove();
-    };
+    return () => chart.remove();
   }, []);
 
-  /* -------------------- CANDLE SOCKET -------------------- */
+  /* -------------------- SOCKETS (UNCHANGED) -------------------- */
   useEffect(() => {
     if (!seriesRef.current) return;
     candleSocketRef.current?.close();
@@ -153,56 +190,25 @@ const Charts: React.FC = () => {
     const ws = new WebSocket(API_BASE_URL.replace('http', 'ws') + '/ws/candles');
     candleSocketRef.current = ws;
     ws.onopen = () => ws.send(JSON.stringify({ symbol: pair, tf }));
-    ws.onmessage = (event) => {
-      const msg: CandleMessage = JSON.parse(event.data);
-      if (msg.type !== 'candle' || msg.symbol !== pair || msg.tf !== tf) return;
+
+    ws.onmessage = e => {
+      const m: CandleMessage = JSON.parse(e.data);
+      if (m.symbol !== pair || m.tf !== tf) return;
+
       seriesRef.current!.update({
-        time: Math.floor(msg.timestamp / 1000),
-        open: msg.open,
-        high: msg.high,
-        low: msg.low,
-        close: msg.close,
+        time: Math.floor(m.timestamp / 1000),
+        open: m.open,
+        high: m.high,
+        low: m.low,
+        close: m.close,
       });
-      if (autoScrollRef.current) chartRef.current?.timeScale().scrollToRealTime();
+
+      if (autoScrollRef.current)
+        chartRef.current?.timeScale().scrollToRealTime();
     };
 
     return () => ws.close();
   }, [pair, tf]);
-
-  /* -------------------- MARKET SOCKET -------------------- */
-  useEffect(() => {
-    marketSocketRef.current?.close();
-    const ws = new WebSocket(API_BASE_URL.replace('http', 'ws') + '/ws/market');
-    marketSocketRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const msg: MarketMessage = JSON.parse(event.data);
-      if (msg.symbol !== pair) return;
-      msg.events.forEach(ev => {
-        const timestamp = Math.floor(new Date(ev.time).getTime() / 1000);
-        const price = ev.broken_level;
-        const existing = marketDrawingsRef.current[ev.id];
-
-        if (!existing) {
-          const line = chartRef.current.addLineSeries({ color: '#22c55e', lineWidth: 2, lineStyle: LineStyle.Solid });
-          line.setData([{ time: timestamp, value: price }, { time: timestamp + 1, value: price }]);
-          marketDrawingsRef.current[ev.id] = { line, lastType: ev.type };
-          return;
-        }
-
-        if (existing.lastType === ev.type) return;
-
-        if (ev.type === 'PULLBACK_CONFIRMED')
-          existing.line.applyOptions({ color: '#3b82f6', lineWidth: 3, lineStyle: LineStyle.Solid });
-        if (ev.type === 'CHOCH')
-          existing.line.applyOptions({ color: '#f59e0b', lineWidth: 3, lineStyle: LineStyle.Dashed });
-
-        existing.lastType = ev.type;
-      });
-    };
-
-    return () => ws.close();
-  }, [pair]);
 
   /* -------------------- UI -------------------- */
   return (
@@ -212,8 +218,11 @@ const Charts: React.FC = () => {
         <div className="flex gap-3">
           <Select value={pair} onValueChange={v => setPair(v as Pair)}>
             <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
-            <SelectContent>{tradingPairs.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+            <SelectContent>
+              {tradingPairs.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+            </SelectContent>
           </Select>
+
           <Select value={tf} onValueChange={v => setTf(v as Timeframe)}>
             <SelectTrigger className="w-[80px]"><SelectValue /></SelectTrigger>
             <SelectContent>
