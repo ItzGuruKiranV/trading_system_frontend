@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ISeriesApi, LineStyle, UTCTimestamp } from 'lightweight-charts';
 import { API_BASE_URL } from '@/config/api';
 
@@ -11,21 +11,11 @@ import {
 } from '@/components/ui/select';
 
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { MousePointer, TrendingUp, Square, Type, Trash2 } from 'lucide-react';
 
-import {
-  MousePointer,
-  TrendingUp,
-  Square,
-  Type,
-  Trash2,
-} from 'lucide-react';
-
-/* ---------------------------------------
-   CONFIG
---------------------------------------- */
+/* -------------------- CONFIG -------------------- */
 const tradingPairs = ['EURUSD', 'GBPJPY'] as const;
 const timeframes = ['5m', '4h'] as const;
-
 type Pair = typeof tradingPairs[number];
 type Timeframe = typeof timeframes[number];
 
@@ -41,42 +31,10 @@ type CandleMessage = {
 };
 
 type MarketEventType = 'BOS' | 'PULLBACK_CONFIRMED' | 'CHOCH';
+type MarketEvent = { id: string; type: MarketEventType; broken_level: number; time: string };
+type MarketMessage = { symbol: Pair; timeframe: Timeframe; events: MarketEvent[] };
 
-type MarketEvent = {
-  id: string;
-  type: MarketEventType;
-  broken_level: number;
-  time: string;
-};
-
-type MarketMessage = {
-  symbol: Pair;
-  timeframe: Timeframe;
-  events: MarketEvent[];
-};
-
-/* ---------------------------------------
-   TIMELINE GENERATOR - FIXED YEAR GRID
---------------------------------------- */
-function generateYearTimeline(): { time: UTCTimestamp; value: number }[] {
-  const timeline: { time: UTCTimestamp; value: number }[] = [];
-  
-  // Generate yearly points from 2020 to 2025
-  for (let year = 2020; year <= 2025; year++) {
-    const startOfYear = Date.UTC(year, 0, 1) / 1000;
-    timeline.push({ time: startOfYear as UTCTimestamp, value: 1 });
-  }
-  
-  // Add end point
-  const endOf2025 = Date.UTC(2025, 11, 31, 23, 59, 59) / 1000;
-  timeline.push({ time: endOf2025 as UTCTimestamp, value: 1 });
-  
-  return timeline;
-}
-
-/* ---------------------------------------
-   CHART COMPONENT
---------------------------------------- */
+/* -------------------- CHART COMPONENT -------------------- */
 const Charts: React.FC = () => {
   const [pair, setPair] = useState<Pair>('EURUSD');
   const [tf, setTf] = useState<Timeframe>('5m');
@@ -88,38 +46,9 @@ const Charts: React.FC = () => {
   const candleSocketRef = useRef<WebSocket | null>(null);
   const marketSocketRef = useRef<WebSocket | null>(null);
   const autoScrollRef = useRef(true);
-  const timeAnchorRef = useRef<any>(null);
   const marketDrawingsRef = useRef<Record<string, { line: any; lastType: MarketEventType }>>({});
-  
-  // Store candles in memory to prevent blanks/duplicates
-  const candlesRef = useRef<Map<number, any>>(new Map());
 
-  /* ---------------------------------------
-     CUSTOM TICK MARK FORMATTER
-  --------------------------------------- */
-  const tickMarkFormatter = useCallback((time: number, tickMarkType: any, locale: any, chart: any) => {
-    const date = new Date(time * 1000);
-    const logicalRange = chart.timeScale().getVisibleLogicalRange();
-    
-    if (!logicalRange) return '';
-    
-    const rangeInSeconds = (logicalRange.to! - logicalRange.from!) * 
-      (chart.timeScale().getBarSpacing() || 1) * 60; // Approximate range
-    
-    // Zoomed out: show only YEAR
-    if (rangeInSeconds > 365 * 24 * 3600 * 0.5) { // More than 6 months
-      return String(date.getUTCFullYear());
-    }
-    
-    // Zoomed in: show detailed date
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    return `${date.getUTCFullYear()}-${month}-${day}`;
-  }, []);
-
-  /* ---------------------------------------
-     INIT CHART - FIXED GRID & TIMELINE
-  --------------------------------------- */
+  /* -------------------- INIT CHART -------------------- */
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -127,51 +56,23 @@ const Charts: React.FC = () => {
       autoSize: true,
       layout: { background: { color: '#020617' }, textColor: '#cbd5e1' },
       grid: {
-        vertLines: { 
-          color: '#1e293b', 
-          style: 0, 
-          visible: true,
-          lineWidth: 1
-        },
-        horzLines: { 
-          color: '#1e293b', 
-          style: 0, 
-          visible: true,
-          lineWidth: 1
-        },
+        vertLines: { color: '#1e293b', style: 0, visible: true },
+        horzLines: { color: '#1e293b', style: 0, visible: true },
       },
-      rightPriceScale: { 
-        borderColor: '#334155', 
-        scaleMargins: { top: 0.15, bottom: 0.15 } 
-      },
+      rightPriceScale: { borderColor: '#334155', scaleMargins: { top: 0.15, bottom: 0.15 } },
       timeScale: {
         timeVisible: true,
-        secondsVisible: false,
-        barSpacing: 12,
-        rightBarStaysOnScroll: true,
+        secondsVisible: true, // show minutes when zoomed in
+        barSpacing: 10,
         fixRightEdge: true,
+        rightBarStaysOnScroll: true,
         borderColor: '#334155',
-        // FIXED YEAR GRID - only shows years when zoomed out
-        tickMarkFormatter: (time: number) => tickMarkFormatter(time, null, null, chart),
       },
       crosshair: {
         mode: 1,
         vertLine: { width: 1, color: '#475569', style: 0, labelBackgroundColor: '#020617' },
         horzLine: { width: 1, color: '#475569', style: 0, labelBackgroundColor: '#020617' },
       },
-      localization: {
-        timeFormatter: (time: number) => {
-          const date = new Date(time * 1000);
-          return date.toLocaleString('en-US', { 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false 
-          });
-        }
-      }
     });
 
     const series = chart.addCandlestickSeries({
@@ -184,9 +85,7 @@ const Charts: React.FC = () => {
       priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
     });
 
-    // -----------------------------
-    // FIXED TIME ANCHOR (2020-2025)
-    // -----------------------------
+    /* -------------------- TIME ANCHOR -------------------- */
     const timeAnchor = chart.addLineSeries({
       color: 'rgba(0,0,0,0)',
       lineWidth: 0,
@@ -196,115 +95,96 @@ const Charts: React.FC = () => {
       priceScaleId: '',
     });
 
-    // FIXED timeline: 2020-2025 yearly points (GRID REMAINS SAME)
-    timeAnchor.setData(generateYearTimeline());
-    timeAnchorRef.current = timeAnchor;
+    const start = Date.UTC(2020, 0, 1) / 1000;
+    const end = Date.UTC(2025, 11, 31, 23, 59, 59) / 1000;
+    const step = 24 * 60 * 60;
+    const timelinePoints: { time: UTCTimestamp; value: number }[] = [];
+    for (let t = start; t <= end; t += step) {
+      timelinePoints.push({ time: t as UTCTimestamp, value: 1 });
+    }
+    timeAnchor.setData(timelinePoints);
 
-    // Initial view: full 2020-2025 range
-    const start = Date.UTC(2020, 0, 1) / 1000 as UTCTimestamp;
-    const end = Date.UTC(2025, 11, 31, 23, 59, 59) / 1000 as UTCTimestamp;
     chart.timeScale().setVisibleLogicalRange({ from: start, to: end });
 
-    // Track auto-scroll
-    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-      if (!range) return;
-      const totalRange = chart.timeScale().getLogicalRange();
-      autoScrollRef.current = range.to >= (totalRange?.to || 0) - 2;
-    });
+    /* -------------------- HIERARCHICAL TICK FORMATTER -------------------- */
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    const updateTickFormatter = () => {
+      chart.timeScale().applyOptions({
+        tickMarkFormatter: (time) => {
+          const date = new Date(time * 1000);
+          const range = chart.timeScale().getVisibleLogicalRange();
+          if (!range) return '';
+          const visibleBars = range.to - range.from;
+
+          // Hierarchical logic
+          if (visibleBars > 5000) return `${date.getUTCFullYear()}`; // Years
+          if (visibleBars > 500) return `${date.getUTCFullYear()} ${monthNames[date.getUTCMonth()]}`; // Months inside years
+          if (visibleBars > 50) return `${date.getUTCDate()}`; // Days inside months
+          if (visibleBars > 10) return `${String(date.getUTCHours()).padStart(2,'0')}:00`; // Hours inside days
+          return `${String(date.getUTCHours()).padStart(2,'0')}:${String(date.getUTCMinutes()).padStart(2,'0')}`; // Minutes inside hours
+        },
+      });
+    };
+
+    updateTickFormatter();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => updateTickFormatter());
 
     chartRef.current = chart;
     seriesRef.current = series;
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range) return;
+      autoScrollRef.current = range.to >= chart.timeScale().getLogicalRange()?.to! - 2;
+    });
 
     return () => {
       candleSocketRef.current?.close();
       marketSocketRef.current?.close();
       chart.remove();
     };
-  }, [tickMarkFormatter]); // Re-run when formatter updates
+  }, []);
 
-  /* ---------------------------------------
-     CANDLE WEBSOCKET - PRECISE HANDLING
-  --------------------------------------- */
+  /* -------------------- CANDLE SOCKET -------------------- */
   useEffect(() => {
     if (!seriesRef.current) return;
     candleSocketRef.current?.close();
-    candlesRef.current.clear(); // Clear on TF change
 
     const ws = new WebSocket(API_BASE_URL.replace('http', 'ws') + '/ws/candles');
     candleSocketRef.current = ws;
-
     ws.onopen = () => ws.send(JSON.stringify({ symbol: pair, tf }));
-
-    ws.onmessage = event => {
+    ws.onmessage = (event) => {
       const msg: CandleMessage = JSON.parse(event.data);
       if (msg.type !== 'candle' || msg.symbol !== pair || msg.tf !== tf) return;
-
-      const candleTime = Math.floor(msg.timestamp / 1000);
-      const candleKey = `${msg.symbol}-${msg.tf}-${candleTime}`;
-
-      // PRECISE CANDLE HANDLING - NO BLANKS/DUPLICATES
-      if (candlesRef.current.has(candleKey)) {
-        // Update existing candle
-        const existingCandle = candlesRef.current.get(candleKey)!;
-        const updatedCandle = {
-          time: candleTime,
-          open: existingCandle.open,
-          high: Math.max(existingCandle.high, msg.high),
-          low: Math.min(existingCandle.low, msg.low),
-          close: msg.close,
-        };
-        
-        candlesRef.current.set(candleKey, updatedCandle);
-        seriesRef.current!.update(updatedCandle);
-      } else {
-        // Add new candle
-        const newCandle = {
-          time: candleTime,
-          open: msg.open,
-          high: msg.high,
-          low: msg.low,
-          close: msg.close,
-        };
-        
-        candlesRef.current.set(candleKey, newCandle);
-        
-        // Use updateBar for precise positioning (works with existing timeline)
-        seriesRef.current!.update(newCandle);
-      }
-
-      // Auto-scroll only if at right edge
-      if (autoScrollRef.current) {
-        chartRef.current?.timeScale().scrollToRealTime();
-      }
+      seriesRef.current!.update({
+        time: Math.floor(msg.timestamp / 1000),
+        open: msg.open,
+        high: msg.high,
+        low: msg.low,
+        close: msg.close,
+      });
+      if (autoScrollRef.current) chartRef.current?.timeScale().scrollToRealTime();
     };
 
     return () => ws.close();
   }, [pair, tf]);
 
-  /* ---------------------------------------
-     MARKET EVENTS WEBSOCKET (UNCHANGED)
-  --------------------------------------- */
+  /* -------------------- MARKET SOCKET -------------------- */
   useEffect(() => {
     marketSocketRef.current?.close();
-
     const ws = new WebSocket(API_BASE_URL.replace('http', 'ws') + '/ws/market');
     marketSocketRef.current = ws;
 
-    ws.onmessage = event => {
+    ws.onmessage = (event) => {
       const msg: MarketMessage = JSON.parse(event.data);
       if (msg.symbol !== pair) return;
-
       msg.events.forEach(ev => {
         const timestamp = Math.floor(new Date(ev.time).getTime() / 1000);
         const price = ev.broken_level;
         const existing = marketDrawingsRef.current[ev.id];
 
         if (!existing) {
-          const line = chartRef.current.addLineSeries({ 
-            color: '#22c55e', 
-            lineWidth: 2, 
-            lineStyle: LineStyle.Solid 
-          });
+          const line = chartRef.current.addLineSeries({ color: '#22c55e', lineWidth: 2, lineStyle: LineStyle.Solid });
           line.setData([{ time: timestamp, value: price }, { time: timestamp + 1, value: price }]);
           marketDrawingsRef.current[ev.id] = { line, lastType: ev.type };
           return;
@@ -324,9 +204,7 @@ const Charts: React.FC = () => {
     return () => ws.close();
   }, [pair]);
 
-  /* ---------------------------------------
-     UI (UNCHANGED)
-  --------------------------------------- */
+  /* -------------------- UI -------------------- */
   return (
     <div className="h-screen flex flex-col p-4">
       <div className="flex justify-between mb-4">
@@ -334,9 +212,7 @@ const Charts: React.FC = () => {
         <div className="flex gap-3">
           <Select value={pair} onValueChange={v => setPair(v as Pair)}>
             <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {tradingPairs.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-            </SelectContent>
+            <SelectContent>{tradingPairs.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
           </Select>
           <Select value={tf} onValueChange={v => setTf(v as Timeframe)}>
             <SelectTrigger className="w-[80px]"><SelectValue /></SelectTrigger>
