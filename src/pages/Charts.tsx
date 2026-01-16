@@ -213,6 +213,7 @@ const Charts: React.FC = () => {
       if (event.type === 'POI-OB') drawPOI_OB(event);
       if (event.type === 'POI-LIQ') series = drawPOILIQ(event);
       if (event.type === 'RETRACEMENT') drawRetracement(event);
+      if (event.type === 'TRADE_PLAN') drawTradePlan(event);
 
       if (series) marketSeriesRef.current.push(series);
     }
@@ -222,28 +223,83 @@ const Charts: React.FC = () => {
   const drawBOS = (event: any) => {
     if (!chartRef.current) return;
 
-    const candleSeconds = TF_SECONDS[tfRef.current]; // ✅ FIX
-    const lengthSeconds = candleSeconds * BOS_CANDLE_LENGTH;
+    const candleSeconds = TF_SECONDS[tfRef.current];
+    const lengthSeconds = candleSeconds * 7; // ✅ next 7 candles
 
     const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const endTime = startTime + lengthSeconds;
+    const midTime = startTime + Math.floor(lengthSeconds / 2);
+
     const price = event.broken_level;
 
     const series = chartRef.current.addLineSeries({
-      color: event.direction === 'BULLISH' ? '#22c55e' : '#ef4444',
+      color: '#ffffff', // ✅ white line
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
 
+    // ✅ BOS horizontal line
     series.setData([
       { time: startTime as UTCTimestamp, value: price },
-      { time: (startTime + lengthSeconds) as UTCTimestamp, value: price },
+      { time: endTime as UTCTimestamp, value: price },
+    ]);
+
+    // ✅ "B" marker in the middle
+    series.setMarkers([
+      {
+        time: midTime as UTCTimestamp,
+        position: 'aboveBar',
+        color: '#ffffff',
+        shape: 'text',
+        text: 'BOS',
+      },
     ]);
 
     return series;
   };
 
+  // draw CHOCH
+    const drawCHOCH = (event: any) => {
+    if (!chartRef.current) return;
+
+    const candleSeconds = TF_SECONDS[tfRef.current];
+    const lengthSeconds = candleSeconds * 7; // ✅ next 7 candles
+
+    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const endTime = startTime + lengthSeconds;
+    const midTime = startTime + Math.floor(lengthSeconds / 2);
+
+    const price = event.broken_level;
+
+    const series = chartRef.current.addLineSeries({
+      color: '#ffffff', // ✅ white line
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    // ✅ BOS horizontal line
+    series.setData([
+      { time: startTime as UTCTimestamp, value: price },
+      { time: endTime as UTCTimestamp, value: price },
+    ]);
+
+    // ✅ "B" marker in the middle
+    series.setMarkers([
+      {
+        time: midTime as UTCTimestamp,
+        position: 'aboveBar',
+        color: '#ffffff',
+        shape: 'text',
+        text: 'CHOCH',
+      },
+    ]);
+
+    return series;
+  };
 
   // draw PULLBACK CONFIRMED
   const drawPullbackConfirmed = (event: any) => {
@@ -269,32 +325,6 @@ const Charts: React.FC = () => {
 
   };
 
-  // draw CHOCH
-  const drawCHOCH = (event: any) => {
-    if (!chartRef.current) return;
-
-    const candleSeconds = TF_SECONDS[tfRef.current]; 
-    const lengthSeconds = candleSeconds * 10;
-
-    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
-    const price = event.broken_level;
-
-    const series = chartRef.current.addLineSeries({
-      color: '#ffffff',
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-
-    series.setData([
-      { time: startTime as UTCTimestamp, value: price },
-      { time: (startTime + lengthSeconds) as UTCTimestamp, value: price },
-    ]);
-
-    return series; 
-  };
-  
   // draw POI-OB
   const drawPOI_OB = (event: any) => {
     if (!chartRef.current) return;
@@ -302,45 +332,33 @@ const Charts: React.FC = () => {
     const start = Math.floor(new Date(event.time_start).getTime() / 1000);
     const end = Math.floor(new Date(event.time_end).getTime() / 1000);
 
-    const high = event.high;
-    const low = event.low;
+    const { high, low } = event;
 
-    const EPS = 1;
-    const color = '#facc15'; 
+    // ---------- POI / OB AREA ----------
+    const obBaseline = chartRef.current.addBaselineSeries({
+      baseValue: { type: 'price', price: low },
 
-    const createLine = () =>
-      chartRef.current!.addLineSeries({
-        color,
-        lineWidth: 1,
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
+      // bottom = fill from low → high
+      bottomLineColor: 'transparent',
+      bottomFillColor1: 'transparent',
+      bottomFillColor2: 'transparent',
 
-    const top = createLine();
-    top.setData([
+      // top = fill area
+      topLineColor: '#79651880',
+      topFillColor1: 'rgba(250, 204, 21, 0.25)',
+      topFillColor2: 'rgba(250, 204, 21, 0.15)',
+
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    obBaseline.setData([
       { time: start as UTCTimestamp, value: high },
       { time: end as UTCTimestamp, value: high },
     ]);
 
-    const bottom = createLine();
-    bottom.setData([
-      { time: start as UTCTimestamp, value: low },
-      { time: end as UTCTimestamp, value: low },
-    ]);
-
-    const left = createLine();
-    left.setData([
-      { time: start as UTCTimestamp, value: low },
-      { time: (start + EPS) as UTCTimestamp, value: high },
-    ]);
-
-    const right = createLine();
-    right.setData([
-      { time: end as UTCTimestamp, value: low },
-      { time: (end + EPS) as UTCTimestamp, value: high },
-    ]);
-
-    marketSeriesRef.current.push(top, bottom, left, right);
+    marketSeriesRef.current.push(obBaseline);
   };
 
   // draw POI-LIQ
@@ -371,68 +389,212 @@ const Charts: React.FC = () => {
   };
 
   // draw RETRACEMENT
+const drawRetracement = (event: any) => {
+  if (!chartRef.current) return;
 
-  const drawRetracement = (event: any) => {
-    if (!chartRef.current) return;
+  // ---------------- TIME ----------------
+  const startTime = Math.floor(
+    new Date(event.time_start).getTime() / 1000
+  );
+  const endTime = Math.floor(
+    new Date(event.time_end).getTime() / 1000
+  );
 
-    const start = Math.floor(new Date(event.time_start).getTime() / 1000);
-    const end   = Math.floor(new Date(event.time_end).getTime() / 1000);
+  const candleSeconds = TF_SECONDS[tfRef.current];
+  const extendSeconds =
+    candleSeconds * (event.extend_candles ?? 1);
 
-    // extend by 1 candle (5m = 300s)
-    const extend = end + 300;
+  const extendTime = endTime + extendSeconds;
 
-    const { high, mid, low } = event;
+  // ---------------- PRICE NORMALIZATION ----------------
+  // Use provided high/low if present, else derive from start/end
+  const rawHigh =
+    event.high ?? Math.max(event.start, event.end);
+  const rawLow =
+    event.low ?? Math.min(event.start, event.end);
 
-    // ---------- UPPER: HIGH → MID ----------
-    const upperArea = chartRef.current.addAreaSeries({
-      topColor: 'rgba(248, 56, 72, 0.35)',
-      bottomColor: 'rgba(12, 12, 12, 0.15)',
-      lineColor: 'rgba(197, 248, 56, 0.8)',
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-      baseValue: { type: 'price', price: mid },
-    });
+  const high = Math.max(rawHigh, rawLow);
+  const low = Math.min(rawHigh, rawLow);
 
-    upperArea.setData([
-      { time: start as UTCTimestamp, value: high },
-      { time: extend as UTCTimestamp, value: high },
-    ]);
+  // Mid must ALWAYS sit between high & low
+  const mid =
+    event.mid ?? (high + low) / 2;
 
-    // ---------- LOWER: MID → LOW ----------
-    const lowerArea = chartRef.current.addAreaSeries({
-      topColor: 'rgba(199, 231, 15, 0.2)',
-      bottomColor: 'rgba(56,189,248,0.05)',
-      lineColor: 'rgba(0,0,0,0)',
-      lineWidth: 0,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-      baseValue: { type: 'price', price: mid },
-    });
+  // ---------------- UPPER ZONE (HIGH → MID) ----------------
+  const upperBaseline = chartRef.current.addBaselineSeries({
+    baseValue: { type: 'price', price: mid },
 
-    lowerArea.setData([
-      { time: start as UTCTimestamp, value: low },
-      { time: extend as UTCTimestamp, value: low },
-    ]);
+    topLineColor: 'rgba(248, 56, 72, 1)',
+    topFillColor1: 'rgba(248, 56, 72, 0.35)',
+    topFillColor2: 'rgba(248, 56, 72, 0.2)',
 
-    // ---------- MID LINE ----------
-    const midLine = chartRef.current.addLineSeries({
-      color: '#1bcc0b',
-      lineWidth: 1,
-      lineStyle: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
+    bottomLineColor: 'transparent',
+    bottomFillColor1: 'transparent',
+    bottomFillColor2: 'transparent',
 
-    midLine.setData([
-      { time: start as UTCTimestamp, value: mid },
-      { time: extend as UTCTimestamp, value: mid },
-    ]);
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
 
-    marketSeriesRef.current.push(upperArea, lowerArea, midLine);
-  };
+  upperBaseline.setData([
+    { time: startTime as UTCTimestamp, value: high },
+    { time: extendTime as UTCTimestamp, value: high },
+  ]);
+
+  // ---------------- LOWER ZONE (MID → LOW) ----------------
+  const lowerBaseline = chartRef.current.addBaselineSeries({
+    baseValue: { type: 'price', price: mid },
+
+    bottomLineColor: 'rgba(56,189,248,0.3)',
+    bottomFillColor1: 'rgba(56,189,248,0.08)',
+    bottomFillColor2: 'rgba(56,189,248,0.05)',
+
+    topLineColor: 'transparent',
+    topFillColor1: 'transparent',
+    topFillColor2: 'transparent',
+
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+
+  lowerBaseline.setData([
+    { time: startTime as UTCTimestamp, value: low },
+    { time: extendTime as UTCTimestamp, value: low },
+  ]);
+
+  // ---------------- MID LINE ----------------
+  const midLine = chartRef.current.addLineSeries({
+    color: '#1bcc0b',
+    lineWidth: 1,
+    lineStyle: 2, // dashed
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+
+  midLine.setData([
+    { time: startTime as UTCTimestamp, value: mid },
+    { time: extendTime as UTCTimestamp, value: mid },
+  ]);
+
+  // ---------------- TRACK SERIES (for cleanup) ----------------
+  marketSeriesRef.current.push(
+    upperBaseline,
+    lowerBaseline,
+    midLine
+  );
+};
+
+ // draw TRADE PLAN
+const drawTradePlan = (event: any) => {
+  if (!chartRef.current) return;
+
+  // ---------------- TIME ----------------
+  const startTime = Math.floor(
+    new Date(event.time_start).getTime() / 1000
+  );
+  const endTime = Math.floor(
+    new Date(event.time_end).getTime() / 1000
+  );
+  const extend_candles = 5
+  const candleSeconds = TF_SECONDS[tfRef.current];
+  const extendTime =
+    endTime + candleSeconds * (extend_candles ?? 1);
+
+  // ---------------- PRICE ----------------
+  const TP = event.TP;
+  const SL = event.SL;
+  const Entry = event.Entry;
+
+  const isLong = event.plan_direction === 'LONG';
+
+  // ---------------- PROFIT ZONE ----------------
+  const profitBaseline = chartRef.current.addBaselineSeries({
+    baseValue: {
+      type: 'price',
+      price: Entry,
+    },
+
+    // GREEN = profit
+    topLineColor: isLong ? 'rgba(36, 119, 54, 0.9)' : 'transparent',
+    topFillColor1: isLong ? 'rgba(36, 119, 54, 0.35)' : 'transparent',
+    topFillColor2: isLong ? 'rgba(36, 119, 54, 0.2)' : 'transparent',
+
+    bottomLineColor: !isLong ? 'rgba(36, 119, 54, 0.9)' : 'transparent',
+    bottomFillColor1: !isLong ? 'rgba(36, 119, 54, 0.35)' : 'transparent',
+    bottomFillColor2: !isLong ? 'rgba(36, 119, 54, 0.2)' : 'transparent',
+
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+
+  profitBaseline.setData([
+    {
+      time: startTime as UTCTimestamp,
+      value: isLong ? TP : TP,
+    },
+    {
+      time: extendTime as UTCTimestamp,
+      value: isLong ? TP : TP,
+    },
+  ]);
+
+  // ---------------- LOSS ZONE ----------------
+  const lossBaseline = chartRef.current.addBaselineSeries({
+    baseValue: {
+      type: 'price',
+      price: Entry,
+    },
+
+    // RED = loss
+    bottomLineColor: isLong ? 'rgba(120, 30, 30, 0.9)' : 'transparent',
+    bottomFillColor1: isLong ? 'rgba(120, 30, 30, 0.35)' : 'transparent',
+    bottomFillColor2: isLong ? 'rgba(120, 30, 30, 0.2)' : 'transparent',
+
+    topLineColor: !isLong ? 'rgba(120, 30, 30, 0.9)' : 'transparent',
+    topFillColor1: !isLong ? 'rgba(120, 30, 30, 0.35)' : 'transparent',
+    topFillColor2: !isLong ? 'rgba(120, 30, 30, 0.2)' : 'transparent',
+
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+
+  lossBaseline.setData([
+    {
+      time: startTime as UTCTimestamp,
+      value: isLong ? SL : SL,
+    },
+    {
+      time: extendTime as UTCTimestamp,
+      value: isLong ? SL : SL,
+    },
+  ]);
+
+  // ---------------- ENTRY LINE ----------------
+  const entryLine = chartRef.current.addLineSeries({
+    color: '#ffffff',
+    lineWidth: 1,
+    lineStyle: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+
+  entryLine.setData([
+    { time: startTime as UTCTimestamp, value: Entry },
+    { time: extendTime as UTCTimestamp, value: Entry },
+  ]);
+
+  // ---------------- TRACK SERIES ----------------
+  marketSeriesRef.current.push(
+    profitBaseline,
+    lossBaseline,
+    entryLine
+  );
+};
 
 
 
