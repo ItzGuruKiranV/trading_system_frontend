@@ -143,9 +143,9 @@ const Charts: React.FC = () => {
       const maxWindow = maxWindowSecondsRef.current;
       if (!maxWindow) return;
 
-      if (range.to - range.from > maxWindow) {
+      if ((range.to as number) - (range.from as number) > maxWindow) {
         chart.timeScale().setVisibleRange({
-          from: (range.to - maxWindow) as UTCTimestamp,
+          from: ((range.to as number) - maxWindow) as UTCTimestamp,
           to: range.to as UTCTimestamp,
         });
       }
@@ -595,12 +595,6 @@ const drawTradePlan = (event: any) => {
     entryLine
   );
 };
-
-
-
-
-
-
 
   /* -------------------- MARKET EVENTS SOCKET -------------------- */
   useEffect(() => {
