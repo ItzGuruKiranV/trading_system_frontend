@@ -32,12 +32,14 @@ type CandleMessage = {
 
 /* -------------------- HELPERS -------------------- */
 const pad = (n: number) => String(n).padStart(2, '0');
+const VISIBLE_CANDLES = 500;
+const TF_SECONDS: Record<Timeframe, number> = {
+  '5m': 5 * 60,
+  '4h': 4 * 60 * 60,
+};
+const BOS_CANDLE_LENGTH = 5;
 
-/* -------------------- TIME WINDOW LIMIT -------------------- */
-const MAX_VISIBLE_SECONDS =
-  9 * 24 * 60 * 60 +
-  9 * 60 * 60 +
-  50 * 60;
+
 
 /* -------------------- COMPONENT -------------------- */
 const Charts: React.FC = () => {
@@ -50,6 +52,20 @@ const Charts: React.FC = () => {
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const candleSocketRef = useRef<WebSocket | null>(null);
   const autoScrollRef = useRef(true);
+  const firstCandleRef = useRef(true);
+  const maxWindowSecondsRef = useRef<number>(0);
+  const marketEventsRef = useRef<Record<Pair, any[]>>({
+    EURUSD: [],
+    GBPJPY: [],
+  });
+  const marketSeriesRef = useRef<any[]>([]);
+  const tfRef = useRef<Timeframe>(tf);
+  const anchorRef = useRef<any>(null);
+
+  
+  useEffect(() => {
+    tfRef.current = tf;
+  }, [tf]);
 
   /* -------------------- INIT CHART -------------------- */
   useEffect(() => {
@@ -92,7 +108,6 @@ const Charts: React.FC = () => {
       },
     });
 
-    /* ---------- SERIES ---------- */
     const series = chart.addCandlestickSeries({
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -106,7 +121,7 @@ const Charts: React.FC = () => {
         minMove: 0.00001,
       },
     });
-    /* ---------- DUMMY PRICE SERIES (FOR PRICE AXIS) ---------- */
+
     const priceDummy = chart.addLineSeries({
       color: 'rgba(0,0,0,0)',
       priceLineVisible: false,
@@ -115,51 +130,28 @@ const Charts: React.FC = () => {
     });
 
     const nowSec = Math.floor(Date.now() / 1000);
-
     priceDummy.setData([
-      { time: (nowSec - 60) as UTCTimestamp, value: 0 },
-      { time: nowSec as UTCTimestamp, value: 2 },
+      { time: (nowSec - 60) as UTCTimestamp, value: 1.0 },
+      { time: nowSec as UTCTimestamp, value: 1.2 },
     ]);
 
-
-    /* ---------- TIME ANCHOR ---------- */
-    const anchor = chart.addLineSeries({
-      color: 'rgba(0,0,0,0)',
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-      priceScaleId: '',
-    });
-
-    const START = Date.UTC(2020, 0, 1) / 1000;
-    const END = Date.UTC(2026, 11, 31, 23, 59) / 1000;
-    const STEP = 5 * 60;
-
-    const anchorData = [];
-    for (let t = START; t <= END; t += STEP) {
-      anchorData.push({ time: t as UTCTimestamp, value: 1 });
-    }
-    anchor.setData(anchorData);
-
-    /* ---------- INITIAL WINDOW ---------- */
     const now = Math.floor(Date.now() / 1000);
-    chart.timeScale().setVisibleRange({
-      from: (now - MAX_VISIBLE_SECONDS) as UTCTimestamp,
-      to: now as UTCTimestamp,
-    });
 
-    /* ---------- CLAMP ZOOM OUT ---------- */
     chart.timeScale().subscribeVisibleTimeRangeChange(range => {
       if (!range) return;
-      if (range.to - range.from > MAX_VISIBLE_SECONDS) {
+
+      const maxWindow = maxWindowSecondsRef.current;
+      if (!maxWindow) return;
+
+      if (range.to - range.from > maxWindow) {
         chart.timeScale().setVisibleRange({
-          from: (range.to - MAX_VISIBLE_SECONDS) as UTCTimestamp,
+          from: (range.to - maxWindow) as UTCTimestamp,
           to: range.to as UTCTimestamp,
         });
       }
     });
 
-    /* ---------- X AXIS FORMAT ---------- */
+
     chart.timeScale().applyOptions({
       tickMarkFormatter: (time: UTCTimestamp) => {
         const d = new Date(time * 1000);
@@ -202,8 +194,336 @@ const Charts: React.FC = () => {
     return () => chart.remove();
   }, []);
 
+
+  // -------------------- DRAW MARKET EVENTS -------------------- //
+  const drawMarketEvent = (data: any) => {
+    if (!chartRef.current) return;
+    if (data.timeframe?.toLowerCase() !== tfRef.current.toLowerCase()) return;
+
+    const events = Array.isArray(data.events)
+      ? data.events
+      : [data];
+
+    for (const event of events) {
+      let series = null;
+
+      if (event.type === 'BOS') series = drawBOS(event);
+      if (event.type === 'PULLBACK_CONFIRMED') series = drawPullbackConfirmed(event);
+      if (event.type === 'CHOCH') series = drawCHOCH(event);
+      if (event.type === 'POI-OB') drawPOI_OB(event);
+      if (event.type === 'POI-LIQ') series = drawPOILIQ(event);
+      if (event.type === 'RETRACEMENT') drawRetracement(event);
+
+      if (series) marketSeriesRef.current.push(series);
+    }
+  };
+
+// draw BOS
+  const drawBOS = (event: any) => {
+    if (!chartRef.current) return;
+
+    const candleSeconds = TF_SECONDS[tfRef.current]; // ✅ FIX
+    const lengthSeconds = candleSeconds * BOS_CANDLE_LENGTH;
+
+    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const price = event.broken_level;
+
+    const series = chartRef.current.addLineSeries({
+      color: event.direction === 'BULLISH' ? '#22c55e' : '#ef4444',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    series.setData([
+      { time: startTime as UTCTimestamp, value: price },
+      { time: (startTime + lengthSeconds) as UTCTimestamp, value: price },
+    ]);
+
+    return series;
+  };
+
+
+  // draw PULLBACK CONFIRMED
+  const drawPullbackConfirmed = (event: any) => {
+    if (!chartRef.current) return;
+
+    const time = Math.floor(new Date(event.time).getTime() / 1000);
+    const price = event.broken_level;
+
+    const pbSeries = chartRef.current.addLineSeries({
+      color: '#facc15',
+      lineWidth: 0,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+      pointMarkersVisible: true,
+      pointMarkersRadius: 6,
+    });
+
+    pbSeries.setData([
+      { time: time as UTCTimestamp, value: price },
+    ]);
+    return pbSeries; 
+
+  };
+
+  // draw CHOCH
+  const drawCHOCH = (event: any) => {
+    if (!chartRef.current) return;
+
+    const candleSeconds = TF_SECONDS[tfRef.current]; 
+    const lengthSeconds = candleSeconds * 10;
+
+    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const price = event.broken_level;
+
+    const series = chartRef.current.addLineSeries({
+      color: '#ffffff',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    series.setData([
+      { time: startTime as UTCTimestamp, value: price },
+      { time: (startTime + lengthSeconds) as UTCTimestamp, value: price },
+    ]);
+
+    return series; 
+  };
+  
+  // draw POI-OB
+  const drawPOI_OB = (event: any) => {
+    if (!chartRef.current) return;
+
+    const start = Math.floor(new Date(event.time_start).getTime() / 1000);
+    const end = Math.floor(new Date(event.time_end).getTime() / 1000);
+
+    const high = event.high;
+    const low = event.low;
+
+    const EPS = 1;
+    const color = '#facc15'; 
+
+    const createLine = () =>
+      chartRef.current!.addLineSeries({
+        color,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+
+    const top = createLine();
+    top.setData([
+      { time: start as UTCTimestamp, value: high },
+      { time: end as UTCTimestamp, value: high },
+    ]);
+
+    const bottom = createLine();
+    bottom.setData([
+      { time: start as UTCTimestamp, value: low },
+      { time: end as UTCTimestamp, value: low },
+    ]);
+
+    const left = createLine();
+    left.setData([
+      { time: start as UTCTimestamp, value: low },
+      { time: (start + EPS) as UTCTimestamp, value: high },
+    ]);
+
+    const right = createLine();
+    right.setData([
+      { time: end as UTCTimestamp, value: low },
+      { time: (end + EPS) as UTCTimestamp, value: high },
+    ]);
+
+    marketSeriesRef.current.push(top, bottom, left, right);
+  };
+
+  // draw POI-LIQ
+  const drawPOILIQ = (event: any) => {
+    if (!chartRef.current) return;
+
+    const candleSeconds = TF_SECONDS[tfRef.current];
+    const lengthSeconds = candleSeconds * 10;
+
+    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const price = event.price;
+
+    const series = chartRef.current.addLineSeries({
+      color: '#22d3ee',
+      lineWidth: 1,
+      lineStyle: 2, 
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    series.setData([
+      { time: startTime as UTCTimestamp, value: price },
+      { time: (startTime + lengthSeconds) as UTCTimestamp, value: price },
+    ]);
+
+    return series;
+  };
+
+  // draw RETRACEMENT
+
+  const drawRetracement = (event: any) => {
+    if (!chartRef.current) return;
+
+    const start = Math.floor(new Date(event.time_start).getTime() / 1000);
+    const end   = Math.floor(new Date(event.time_end).getTime() / 1000);
+
+    // extend by 1 candle (5m = 300s)
+    const extend = end + 300;
+
+    const { high, mid, low } = event;
+
+    // ---------- UPPER: HIGH → MID ----------
+    const upperArea = chartRef.current.addAreaSeries({
+      topColor: 'rgba(248, 56, 72, 0.35)',
+      bottomColor: 'rgba(12, 12, 12, 0.15)',
+      lineColor: 'rgba(197, 248, 56, 0.8)',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      baseValue: { type: 'price', price: mid },
+    });
+
+    upperArea.setData([
+      { time: start as UTCTimestamp, value: high },
+      { time: extend as UTCTimestamp, value: high },
+    ]);
+
+    // ---------- LOWER: MID → LOW ----------
+    const lowerArea = chartRef.current.addAreaSeries({
+      topColor: 'rgba(199, 231, 15, 0.2)',
+      bottomColor: 'rgba(56,189,248,0.05)',
+      lineColor: 'rgba(0,0,0,0)',
+      lineWidth: 0,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      baseValue: { type: 'price', price: mid },
+    });
+
+    lowerArea.setData([
+      { time: start as UTCTimestamp, value: low },
+      { time: extend as UTCTimestamp, value: low },
+    ]);
+
+    // ---------- MID LINE ----------
+    const midLine = chartRef.current.addLineSeries({
+      color: '#1bcc0b',
+      lineWidth: 1,
+      lineStyle: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    midLine.setData([
+      { time: start as UTCTimestamp, value: mid },
+      { time: extend as UTCTimestamp, value: mid },
+    ]);
+
+    marketSeriesRef.current.push(upperArea, lowerArea, midLine);
+  };
+
+
+
+
+
+
+
+  /* -------------------- MARKET EVENTS SOCKET -------------------- */
+  useEffect(() => {
+    const ws = new WebSocket(
+        API_BASE_URL.replace('http', 'ws') + '/ws/market'
+      );
+
+    ws.onmessage = e => {
+      const data = JSON.parse(e.data);
+
+      if (data.symbol !== pair) return;
+
+      marketEventsRef.current[pair].push(data);
+
+      if (data.timeframe?.toLowerCase() === tfRef.current.toLowerCase()) {
+        drawMarketEvent(data);
+      }
+    };
+    return () => ws.close();
+  }, [pair]);
+ 
+
+  /* -------------------- REDRAW MARKET EVENTS ON TF CHANGE -------------------- */
+  useEffect(() => {
+    if (!chartRef.current) return;
+    marketSeriesRef.current.forEach(series =>
+      chartRef.current.removeSeries(series)
+    );
+    marketSeriesRef.current = [];
+    marketEventsRef.current[pair]
+      .filter(e => e.timeframe?.toLowerCase() === tf.toLowerCase())
+      .forEach(drawMarketEvent);
+  }, [tf]);
+
+
+  /* -------------------- CLEAR MARKET EVENTS ON PAIR CHANGE -------------------- */
+  useEffect(() => {
+    if (!chartRef.current) return;
+    marketSeriesRef.current.forEach(series =>
+      chartRef.current.removeSeries(series)
+    );
+    marketSeriesRef.current = [];
+  }, [pair]);
+
+
+  /* -------------------- TIME ANCHOR (TF-AWARE) -------------------- */
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    if (anchorRef.current) {
+      chartRef.current.removeSeries(anchorRef.current);
+      anchorRef.current = null;
+    }
+
+    const anchor = chartRef.current.addLineSeries({
+      color: 'rgba(0,0,0,0)',
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      priceScaleId: '',
+    });
+
+    anchorRef.current = anchor;
+
+    const START = Date.UTC(2020, 0, 1) / 1000;
+    const END = Date.UTC(2026, 11, 31, 23, 59) / 1000;
+    const STEP = tf === '4h' ? 4 * 60 * 60 : 5 * 60;
+
+    const data = [];
+    for (let t = START; t <= END; t += STEP) {
+      data.push({ time: t as UTCTimestamp, value: 1 });
+    }
+
+    anchor.setData(data);
+  }, [tf]);
+
+
   /* -------------------- SOCKETS -------------------- */
   useEffect(() => {
+    if (seriesRef.current) {
+      seriesRef.current.setData([]);
+    }
+
+    firstCandleRef.current = true;
+
     if (!seriesRef.current) return;
 
     candleSocketRef.current?.close();
@@ -224,13 +544,31 @@ const Charts: React.FC = () => {
         close: m.close,
       });
 
-      if (autoScrollRef.current) {
-        chartRef.current?.timeScale().scrollToRealTime();
-      }
+    if (firstCandleRef.current) {
+      const tfSeconds = TF_SECONDS[tf];
+      const windowSeconds = tfSeconds * VISIBLE_CANDLES;
+
+      maxWindowSecondsRef.current = windowSeconds;
+
+      const t = Math.floor(m.timestamp / 1000);
+
+      chartRef.current?.timeScale().setVisibleRange({
+        from: (t - windowSeconds) as UTCTimestamp,
+        to: t as UTCTimestamp,
+      });
+
+      seriesRef.current?.priceScale().applyOptions({
+        autoScale: true,
+      });
+
+      firstCandleRef.current = false;
+    }
+
     };
 
     return () => ws.close();
   }, [pair, tf]);
+
 
   /* -------------------- UI -------------------- */
   return (
