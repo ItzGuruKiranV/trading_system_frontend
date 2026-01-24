@@ -66,8 +66,10 @@ const Charts: React.FC = () => {
     GBPJPY: { '5m': [], '4h': [] },
   });
 
+  const [isConnected, setIsConnected] = useState(false);
 
-  
+
+
   useEffect(() => {
     tfRef.current = tf;
   }, [tf]);
@@ -169,7 +171,10 @@ const Charts: React.FC = () => {
         const range = chart.timeScale().getVisibleRange();
         if (!range) return '';
 
-        const span = range.to - range.from;
+        // Ensure range.to and range.from are numbers
+        const fromNum = typeof range.from === 'number' ? range.from : Number(range.from);
+        const toNum = typeof range.to === 'number' ? range.to : Number(range.to);
+        const span = toNum - fromNum;
 
         if (span > 3600 * 24 * 60) {
           return day === 1 ? d.toLocaleString('en', { month: 'short' }) : '';
@@ -223,7 +228,7 @@ const Charts: React.FC = () => {
     }
   };
 
-// draw BOS
+  // draw BOS
   const drawBOS = (event: any) => {
     if (!chartRef.current) return;
 
@@ -265,7 +270,7 @@ const Charts: React.FC = () => {
   };
 
   // draw CHOCH
-    const drawCHOCH = (event: any) => {
+  const drawCHOCH = (event: any) => {
     if (!chartRef.current) return;
 
     const candleSeconds = TF_SECONDS[tfRef.current];
@@ -325,7 +330,7 @@ const Charts: React.FC = () => {
     pbSeries.setData([
       { time: time as UTCTimestamp, value: price },
     ]);
-    return pbSeries; 
+    return pbSeries;
 
   };
 
@@ -378,7 +383,7 @@ const Charts: React.FC = () => {
     const series = chartRef.current.addLineSeries({
       color: '#22d3ee',
       lineWidth: 1,
-      lineStyle: 2, 
+      lineStyle: 2,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
@@ -608,8 +613,15 @@ const Charts: React.FC = () => {
     candleSocketRef.current = ws;
 
     ws.onopen = () => {
+      console.log('Candle WS Connected');
+      setIsConnected(true);
       ws.send(JSON.stringify({ symbol: pair })); // ❗ NO TF
     };
+
+    ws.onclose = () => {
+      console.log('Candle WS Disconnected');
+      setIsConnected(false);
+    }
 
     ws.onmessage = e => {
       const m: CandleMessage = JSON.parse(e.data);
@@ -618,7 +630,7 @@ const Charts: React.FC = () => {
       candlesCacheRef.current[m.symbol][m.tf].push(m);
 
       if (m.tf === tfRef.current && seriesRef.current) {
-        const time = Math.floor(m.timestamp / 1000);
+        const time = Math.floor(m.timestamp / 1000) as UTCTimestamp;
 
         seriesRef.current.update({
           time,
@@ -652,8 +664,8 @@ const Charts: React.FC = () => {
   /* -------------------- MARKET EVENTS SOCKET -------------------- */
   useEffect(() => {
     const ws = new WebSocket(
-        API_BASE_URL.replace('http', 'ws') + '/ws/market'
-      );
+      API_BASE_URL.replace('http', 'ws') + '/ws/market'
+    );
 
     ws.onmessage = e => {
       const data = JSON.parse(e.data);
@@ -671,15 +683,15 @@ const Charts: React.FC = () => {
 
   /* -------------------- REDRAW MARKET EVENTS ON TF CHANGE -------------------- */
   useEffect(() => {
-      if (!chartRef.current) return;
-      marketSeriesRef.current.forEach(series =>
-        chartRef.current.removeSeries(series)
-      );
-      marketSeriesRef.current = [];
-      marketEventsRef.current[pair]
-        .filter(e => e.timeframe?.toLowerCase() === tf.toLowerCase())
-        .forEach(drawMarketEvent);
-    }, [pair , tf]);
+    if (!chartRef.current) return;
+    marketSeriesRef.current.forEach(series =>
+      chartRef.current.removeSeries(series)
+    );
+    marketSeriesRef.current = [];
+    marketEventsRef.current[pair]
+      .filter(e => e.timeframe?.toLowerCase() === tf.toLowerCase())
+      .forEach(drawMarketEvent);
+  }, [pair, tf]);
 
   /* -------------------- REDRAW CANDLES ON PAIR/TF CHANGE -------------------- */
   useEffect(() => {
@@ -749,7 +761,12 @@ const Charts: React.FC = () => {
   return (
     <div className="h-screen flex flex-col p-4">
       <div className="flex justify-between mb-4">
-        <h1 className="text-xl font-bold">Charts</h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-bold">Charts</h1>
+          <div className={`px-2 py-0.5 rounded text-xs font-mono border ${isConnected ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20'}`}>
+            {isConnected ? 'LIVE' : 'OFFLINE'}
+          </div>
+        </div>
 
         <div className="flex gap-3">
           <Select value={pair} onValueChange={v => setPair(v as Pair)}>
