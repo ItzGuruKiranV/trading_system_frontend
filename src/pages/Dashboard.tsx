@@ -2,11 +2,11 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { TradingCard } from '@/components/ui/card';
-import { 
-  BookOpen, 
-  BarChart3, 
-  LineChart, 
-  Cog, 
+import {
+  BookOpen,
+  BarChart3,
+  LineChart,
+  Cog,
   Lock,
   TrendingUp,
   Clock,
@@ -15,46 +15,46 @@ import {
 import { tradingPairs } from '@/data/mockData';
 
 const dashboardCards = [
-  { 
-    id: 'journal', 
-    title: 'Journal', 
+  {
+    id: 'journal',
+    title: 'Journal',
     description: 'Track your trades and emotions',
-    icon: BookOpen, 
+    icon: BookOpen,
     path: '/journal',
-    color: 'from-blue-500 to-blue-600' 
+    color: 'from-blue-500 to-blue-600'
   },
-  { 
-    id: 'backtests', 
-    title: 'Backtest Results', 
+  {
+    id: 'backtests',
+    title: 'Backtest Results',
     description: 'View historical performance',
-    icon: BarChart3, 
+    icon: BarChart3,
     path: '/backtests',
-    color: 'from-green-500 to-green-600' 
+    color: 'from-green-500 to-green-600'
   },
-  { 
-    id: 'charts', 
-    title: 'Charts', 
+  {
+    id: 'charts',
+    title: 'Charts',
     description: 'Analyze price action',
-    icon: LineChart, 
+    icon: LineChart,
     path: '/charts',
-    color: 'from-purple-500 to-purple-600' 
+    color: 'from-purple-500 to-purple-600'
   },
-  { 
-    id: 'system1', 
-    title: 'System 1 Chart', 
+  {
+    id: 'system1',
+    title: 'System 1 Chart',
     description: 'Market structure analysis',
-    icon: Cog, 
+    icon: Cog,
     path: '/systems/system1',
-    color: 'from-cyan-500 to-cyan-600' 
+    color: 'from-cyan-500 to-cyan-600'
   },
-  { 
-    id: 'system2', 
-    title: 'System 2 Chart', 
+  {
+    id: 'system2',
+    title: 'System 2 Chart',
     description: 'Coming soon',
-    icon: Lock, 
+    icon: Lock,
     path: '#',
     color: 'from-gray-500 to-gray-600',
-    disabled: true 
+    disabled: true
   },
 ];
 

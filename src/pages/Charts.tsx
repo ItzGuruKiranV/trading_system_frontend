@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
-import { API_BASE_URL } from '@/config/api';
+import {
+  subscribeToMarket,
+  getCandles,
+  getMarketEvents,
+} from '@/data/marketStore';
+
 
 import {
   Select,
@@ -50,29 +55,41 @@ const Charts: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const candleSocketRef = useRef<WebSocket | null>(null);
   const autoScrollRef = useRef(true);
   const firstCandleRef = useRef(true);
   const maxWindowSecondsRef = useRef<number>(0);
-  const marketEventsRef = useRef<Record<Pair, any[]>>({
-    EURUSD: [],
-    GBPJPY: [],
-  });
   const marketSeriesRef = useRef<any[]>([]);
   const tfRef = useRef<Timeframe>(tf);
+  const pairRef = useRef<Pair>(pair);
   const anchorRef = useRef<any>(null);
-  const candlesCacheRef = useRef<Record<Pair, Record<Timeframe, CandleMessage[]>>>({
-    EURUSD: { '5m': [], '4h': [] },
-    GBPJPY: { '5m': [], '4h': [] },
-  });
-
-  const [isConnected, setIsConnected] = useState(false);
+  const lastEventCountRef = useRef(0);
 
 
 
+  const [isConnected] = useState(true);
+
+  /* -------------------- REFS SYNC -------------------- */
   useEffect(() => {
     tfRef.current = tf;
   }, [tf]);
+
+  useEffect(() => {
+    pairRef.current = pair;
+  }, [pair]);
+  /* -------------------- PAIR / TF CHANGE (LOCAL RESET ONLY) -------------------- */
+  useEffect(() => {
+    firstCandleRef.current = true;
+    lastEventCountRef.current = 0;
+
+    // Clear drawn market structures
+    if (chartRef.current) {
+      marketSeriesRef.current.forEach(s =>
+        chartRef.current.removeSeries(s)
+      );
+      marketSeriesRef.current = [];
+    }
+  }, [pair, tf]);
+
 
   /* -------------------- INIT CHART -------------------- */
   useEffect(() => {
@@ -604,127 +621,58 @@ const Charts: React.FC = () => {
       entryLine
     );
   };
-
-  /* -------------------- WEBSOCKET FOR CANDLES -------------------- */
+  /* -------------------- MARKET STORE SUBSCRIPTION -------------------- */
   useEffect(() => {
-    candleSocketRef.current?.close();
+    const unsubscribeUI = subscribeToMarket(() => {
+      const pair = pairRef.current;
+      const tf = tfRef.current;
 
-    const ws = new WebSocket(API_BASE_URL.replace('http', 'ws') + '/ws/candles');
-    candleSocketRef.current = ws;
+      // ----- CANDLES -----
+      const candles = getCandles(pair, tf);
+      if (candles.length && seriesRef.current) {
+        const data = candles.map(c => ({
+          time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        }));
 
-    ws.onopen = () => {
-      console.log('Candle WS Connected');
-      setIsConnected(true);
-      ws.send(JSON.stringify({ symbol: pair })); // ❗ NO TF
-    };
+        seriesRef.current.setData(data);
 
-    ws.onclose = () => {
-      console.log('Candle WS Disconnected');
-      setIsConnected(false);
-    }
-
-    ws.onmessage = e => {
-      const m: CandleMessage = JSON.parse(e.data);
-      if (m.symbol !== pair) return;
-
-      candlesCacheRef.current[m.symbol][m.tf].push(m);
-
-      if (m.tf === tfRef.current && seriesRef.current) {
-        const time = Math.floor(m.timestamp / 1000) as UTCTimestamp;
-
-        seriesRef.current.update({
-          time,
-          open: m.open,
-          high: m.high,
-          low: m.low,
-          close: m.close,
-        });
-
-        // ✅ AUTO-SCROLL ONLY FOR FIRST CANDLE
         if (firstCandleRef.current && chartRef.current) {
-          const windowSeconds = TF_SECONDS[tfRef.current] * VISIBLE_CANDLES;
+          const last = data[data.length - 1].time;
+          const windowSeconds = TF_SECONDS[tf] * VISIBLE_CANDLES;
 
           chartRef.current.timeScale().setVisibleRange({
-            from: (time - windowSeconds) as UTCTimestamp,
-            to: time as UTCTimestamp,
+            from: (last - windowSeconds) as UTCTimestamp,
+            to: last as UTCTimestamp,
           });
 
-          seriesRef.current.priceScale().applyOptions({ autoScale: true });
-
-          // ❗ IMPORTANT: turn it off forever
           firstCandleRef.current = false;
         }
       }
-    };
 
+      // ----- MARKET EVENTS -----
+      const events = getMarketEvents(pair)
+        .filter(e => e.symbol === pair && e.timeframe?.toLowerCase() === tf.toLowerCase());
 
-    return () => ws.close();
-  }, [pair]);
-
-  /* -------------------- MARKET EVENTS SOCKET -------------------- */
-  useEffect(() => {
-    const ws = new WebSocket(
-      API_BASE_URL.replace('http', 'ws') + '/ws/market'
-    );
-
-    ws.onmessage = e => {
-      const data = JSON.parse(e.data);
-
-      if (data.symbol !== pair) return;
-
-      marketEventsRef.current[pair].push(data);
-
-      if (data.timeframe?.toLowerCase() === tfRef.current.toLowerCase()) {
-        drawMarketEvent(data);
+      if (events.length !== lastEventCountRef.current) {
+        marketSeriesRef.current.forEach(s =>
+          chartRef.current.removeSeries(s)
+        );
+        marketSeriesRef.current = [];
+        events.forEach(drawMarketEvent);
+        lastEventCountRef.current = events.length;
       }
-    };
-    return () => ws.close();
-  }, [pair]);
 
-  /* -------------------- REDRAW MARKET EVENTS ON TF CHANGE -------------------- */
-  useEffect(() => {
-    if (!chartRef.current) return;
-    marketSeriesRef.current.forEach(series =>
-      chartRef.current.removeSeries(series)
-    );
-    marketSeriesRef.current = [];
-    marketEventsRef.current[pair]
-      .filter(e => e.timeframe?.toLowerCase() === tf.toLowerCase())
-      .forEach(drawMarketEvent);
-  }, [pair, tf]);
-
-  /* -------------------- REDRAW CANDLES ON PAIR/TF CHANGE -------------------- */
-  useEffect(() => {
-    if (!seriesRef.current || !chartRef.current) return;
-
-    const cached = candlesCacheRef.current[pair][tf];
-    if (!cached.length) return;
-
-    // 👇 mark redraw context
-    const data = cached.map(c => ({
-      time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    seriesRef.current.setData(data);
-
-    // ✅ FIRST REAL CANDLE TIME
-    const firstTime = data[0].time;
-    const lastTime = data[data.length - 1].time;
-
-    const windowSeconds = TF_SECONDS[tf] * VISIBLE_CANDLES;
-    maxWindowSecondsRef.current = windowSeconds;
-
-    // ✅ AUTO-SCROLL TO FIRST CANDLE (THIS IS WHAT YOU WANT)
-    chartRef.current.timeScale().setVisibleRange({
-      from: firstTime,
-      to: (firstTime + windowSeconds) as UTCTimestamp,
     });
-    firstCandleRef.current = true;
-  }, [tf, pair]);
+
+    return () => {
+      unsubscribeUI();
+    };
+  }, []); // ✅ NOW LEGIT
+
 
   /* -------------------- TIME ANCHOR (TF-AWARE) -------------------- */
   useEffect(() => {
