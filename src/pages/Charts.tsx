@@ -72,10 +72,10 @@ const Charts: React.FC = () => {
   useEffect(() => {
     tfRef.current = tf;
   }, [tf]);
-
   useEffect(() => {
     pairRef.current = pair;
   }, [pair]);
+
   /* -------------------- PAIR / TF CHANGE (LOCAL RESET ONLY) -------------------- */
   useEffect(() => {
     firstCandleRef.current = true;
