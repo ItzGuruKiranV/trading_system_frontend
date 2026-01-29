@@ -2,8 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import {
   subscribeToMarket,
-  getCandles,
+  subscribeToCandlesLoaded,
   getMarketEvents,
+  getCandles,
+  getUnplottedPending,
+  markPendingPlotted,
+  sendPlottedAck,
 } from '@/data/marketStore';
 
 
@@ -141,8 +145,8 @@ const Charts: React.FC = () => {
       wickDownColor: '#ef4444',
       priceFormat: {
         type: 'price',
-        precision: 5,
-        minMove: 0.00001,
+        precision: pair === 'GBPJPY' ? 3 : 5,
+        minMove: pair === 'GBPJPY' ? 0.001 : 0.00001,
       },
     });
 
@@ -236,7 +240,7 @@ const Charts: React.FC = () => {
       if (event.type === 'BOS') series = drawBOS(event);
       if (event.type === 'PULLBACK_CONFIRMED') series = drawPullbackConfirmed(event);
       if (event.type === 'CHOCH') series = drawCHOCH(event);
-      if (event.type === 'POI-OB') drawPOI_OB(event);
+      if (event.type === 'POI-OB') series = drawPOI_OB(event);
       if (event.type === 'POI-LIQ') series = drawPOILIQ(event);
       if (event.type === 'RETRACEMENT') drawRetracement(event);
       if (event.type === 'TRADE_PLAN') drawTradePlan(event);
@@ -384,7 +388,7 @@ const Charts: React.FC = () => {
       { time: end as UTCTimestamp, value: high },
     ]);
 
-    marketSeriesRef.current.push(obBaseline);
+    return obBaseline;
   };
 
   // draw POI-LIQ
@@ -621,57 +625,117 @@ const Charts: React.FC = () => {
       entryLine
     );
   };
+
+  useEffect(() => {
+    const loadAndSetCandles = () => {
+      const candles = getCandles(pairRef.current, tfRef.current);
+      if (!seriesRef.current || !candles || !candles.length) return;
+
+      const data = candles.map(c => ({
+        time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+
+      seriesRef.current.setData(data);
+
+      // Set initial visible range to start at the first candle (only once)
+      if (firstCandleRef.current && chartRef.current) {
+        const last = data[data.length - 1].time;
+        const windowSeconds = TF_SECONDS[tfRef.current] * VISIBLE_CANDLES;
+        const first = data[0].time;
+
+        // Show window starting at first candle; don't go past last
+        const from = first;
+        const to = Math.min(first + windowSeconds, last);
+
+        chartRef.current.timeScale().setVisibleRange({
+          from: from as UTCTimestamp,
+          to: to as UTCTimestamp,
+        });
+
+        maxWindowSecondsRef.current = windowSeconds;
+        firstCandleRef.current = false;
+      }
+    };
+
+    loadAndSetCandles();
+
+    // React to CSV load completing (in case CSV finishes after mount)
+    const unsubLoaded = subscribeToCandlesLoaded(() => {
+      loadAndSetCandles();
+    });
+
+    return () => unsubLoaded && unsubLoaded();
+  }, [pair, tf]);
+
+  // initial-only auto-scroll handled in loadAndSetCandles
+
+  // Update price precision when pair changes
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    seriesRef.current.applyOptions({
+      priceFormat: {
+        type: 'price',
+        precision: pair === 'GBPJPY' ? 3 : 5,
+        minMove: pair === 'GBPJPY' ? 0.001 : 0.00001,
+      },
+    });
+  }, [pair]);
+
   /* -------------------- MARKET STORE SUBSCRIPTION -------------------- */
   useEffect(() => {
     const unsubscribeUI = subscribeToMarket(() => {
+      // When market WS pushes, draw newly unplotted events
       const pair = pairRef.current;
       const tf = tfRef.current;
 
-      // ----- CANDLES -----
-      const candles = getCandles(pair, tf);
-      if (candles.length && seriesRef.current) {
-        const data = candles.map(c => ({
-          time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        }));
+      const newEvents = getUnplottedPending(pair, tf);
 
-        seriesRef.current.setData(data);
+      console.debug('[Charts] unplotted events', pair, tf, newEvents.length);
 
-        if (firstCandleRef.current && chartRef.current) {
-          const last = data[data.length - 1].time;
-          const windowSeconds = TF_SECONDS[tf] * VISIBLE_CANDLES;
+      if (!newEvents || newEvents.length === 0) return;
 
-          chartRef.current.timeScale().setVisibleRange({
-            from: (last - windowSeconds) as UTCTimestamp,
-            to: last as UTCTimestamp,
-          });
+      const drawnIds: string[] = [];
+      newEvents.forEach(ev => {
+        console.debug('[Charts] drawing event', { pair, tf, id: ev.id, type: ev.type, ev });
+        drawMarketEvent({ symbol: pair, timeframe: tf, events: [ev] });
+        if (ev.id) drawnIds.push(ev.id);
+      });
 
-          firstCandleRef.current = false;
-        }
+      if (drawnIds.length) {
+        markPendingPlotted(pair, drawnIds);
+        sendPlottedAck(pair, drawnIds);
       }
-
-      // ----- MARKET EVENTS -----
-      const events = getMarketEvents(pair)
-        .filter(e => e.symbol === pair && e.timeframe?.toLowerCase() === tf.toLowerCase());
-
-      if (events.length !== lastEventCountRef.current) {
-        marketSeriesRef.current.forEach(s =>
-          chartRef.current.removeSeries(s)
-        );
-        marketSeriesRef.current = [];
-        events.forEach(drawMarketEvent);
-        lastEventCountRef.current = events.length;
-      }
-
     });
 
-    return () => {
-      unsubscribeUI();
-    };
+    return () => unsubscribeUI();
   }, []); // ✅ NOW LEGIT
+
+  // Periodically flush any remaining unplotted pending events (ensures plotting even if no WS event arrives)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const pair = pairRef.current;
+      const tf = tfRef.current;
+      const newEvents = getUnplottedPending(pair, tf);
+      if (!newEvents || newEvents.length === 0) return;
+
+      const drawnIds: string[] = [];
+      newEvents.forEach(ev => {
+        drawMarketEvent({ symbol: pair, timeframe: tf, events: [ev] });
+        if (ev.id) drawnIds.push(ev.id);
+      });
+
+      if (drawnIds.length) {
+        markPendingPlotted(pair, drawnIds);
+        sendPlottedAck(pair, drawnIds);
+      }
+    }, 1000);
+
+    return () => clearInterval(t);
+  }, []);
 
 
   /* -------------------- TIME ANCHOR (TF-AWARE) -------------------- */
