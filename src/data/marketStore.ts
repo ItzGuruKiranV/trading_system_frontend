@@ -21,33 +21,27 @@ export type CandleMessage = {
 export type MarketEvent = {
     symbol: Pair;
     timeframe?: Timeframe;
-    events: any[];
+    [key: string]: any;   // 👈 allow event payload
 };
 
+
 /* ================= CACHES ================= */
-/**
- * Global in-memory caches.
- * Backend NEVER controls these.
- * Frontend ONLY reads & filters.
- */
+
 
 const candlesCache: Record<Pair, Record<Timeframe, CandleMessage[]>> = {
     EURUSD: { '5m': [], '4h': [] },
     GBPJPY: { '5m': [], '4h': [] },
 };
 
-const marketEvents: Record<Pair, MarketEvent[]> = {
+const renderQueue: Record<Pair, MarketEvent[]> = {
     EURUSD: [],
     GBPJPY: [],
 };
 
-// Pending events queue: events here are waiting to be plotted by the UI.
-// Each entry: { ev: any, plotted?: boolean }
-const pendingEvents: Record<Pair, Array<{ ev: any; plotted?: boolean }>> = {
+const storeEvents: Record<Pair, MarketEvent[]> = {
     EURUSD: [],
     GBPJPY: [],
 };
-
 /* ================= SOCKET MANAGER ================= */
 /**
  * PURE LISTENER WebSocket manager
@@ -61,7 +55,6 @@ const pendingEvents: Record<Pair, Array<{ ev: any; plotted?: boolean }>> = {
 
 let candlesLoaded = false;
 const candlesLoadedListeners = new Set<() => void>();
-const MAX_MARKET_EVENTS = 2000;
 
 async function loadAllCandlesOnce() {
     if (candlesLoaded) return;
@@ -131,49 +124,39 @@ class MarketSocketManager {
     }
 
     private handleMessage(e: MessageEvent) {
-        // const packet: MarketEventPacket = JSON.parse(e.data);
-        console.log('[DEBUG Handle message] Received raw message:', e.data);
         let packet: any;
         try {
             packet = JSON.parse(e.data);
-        } catch (err) {
-            console.log('[DEBUG handleMessage] Failed to parse message', err, e.data);
+        } catch {
             return;
         }
 
-        console.log('[DEBUG handleMessage] Parsed packet:', packet);
+        if (!packet || !packet.symbol || !Array.isArray(packet.events)) return;
 
-        if (!packet || !('symbol' in packet) || !Array.isArray(packet.events)) return;
-
-        const symbol = packet.symbol;
-        let added = false;   // 👈 track real additions
+        const symbol = packet.symbol as Pair;
+        let added = false;
 
         packet.events.forEach(ev => {
-            console.log('[DEBUG handleMessage] Processing event:', ev);
             const obj = {
                 ...ev,
                 symbol,
                 timeframe: packet.timeframe,
             };
 
-            marketEvents[symbol] = [...marketEvents[symbol], obj];
-            pendingEvents[symbol] = [
-                ...pendingEvents[symbol],
-                { ev: obj, plotted: false }
-            ];
+            // ✅ permanent
+            storeEvents[symbol].push(obj);
 
-            added = true;   // 👈 only true if event came
+            // ✅ one-time draw
+            renderQueue[symbol].push(obj);
 
-            if (marketEvents[symbol].length > MAX_MARKET_EVENTS) {
-                marketEvents[symbol] = marketEvents[symbol].slice(-MAX_MARKET_EVENTS);
-            }
+            added = true;
         });
 
         if (added) {
-            console.log(`[DEBUG handleMessage] Events added for ${symbol}, total now:`, marketEvents[symbol].length);
-            this.emit();   // 🚀 only notify when needed
+            this.emit();
         }
     }
+
 
     private reconnectMarketWS(pair: Pair) {
         this.marketWS[pair] = new WebSocket(
@@ -217,52 +200,15 @@ export function getCandles(pair: Pair, tf: Timeframe) {
     return candlesCache[pair][tf];
 }
 
-export function getMarketEvents(pair: Pair) {
-    return marketEvents[pair];
-}
-
-// Return unplotted pending events for `pair` and `tf` (does NOT remove them)
-export function getUnplottedPending(pair: Pair, tf: Timeframe) {
-    const arr = pendingEvents[pair] || [];
-    const out: any[] = [];
-    for (const entry of arr) {
-        const ev = entry.ev as any;
-        const evTf = (ev.timeframe ?? ev.tf ?? '').toString().toLowerCase();
-        if (!entry.plotted && evTf === tf.toLowerCase()) {
-            out.push(ev);
-        }
-    }
-    return out;
-}
-
-// Mark given event ids as plotted for a pair (ids: array of event.id)
-export function markPendingPlotted(pair: Pair, ids: string[]) {
-    const arr = pendingEvents[pair] || [];
-
-    for (const entry of arr) {
-        const ev = entry.ev as any;
-        if (ev && ev.id && ids.includes(ev.id)) {
-            entry.plotted = true;
-        }
-    }
-
-    // 🧹 CLEANUP: remove old plotted entries
-    pendingEvents[pair] = arr.filter(e => !e.plotted);
-}
-
-// Send ack for plotted event ids to backend if socket is open
-export function sendPlottedAck(pair: Pair, ids: string[]) {
-    try {
-        const ws = (socketManager as any).marketWS[pair] as WebSocket | undefined;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ack', symbol: pair, ids }));
-        }
-    } catch (e) {
-        // ignore
-    }
+export function getrenderQueue(pair: Pair) {
+    return renderQueue[pair];
 }
 
 export function subscribeToCandlesLoaded(cb: () => void) {
     candlesLoadedListeners.add(cb);
     return () => candlesLoadedListeners.delete(cb);
 }
+export function getStoreEvents(pair: Pair) {
+    return storeEvents[pair];
+}
+
