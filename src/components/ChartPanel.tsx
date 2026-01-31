@@ -67,7 +67,7 @@ const ChartPanel: React.FC = () => {
   const pairRef = useRef<Pair>(pair);
   const anchorRef = useRef<any>(null);
   const drawnEventIdsRef = useRef<Set<string>>(new Set());
-  
+
 
 
 
@@ -260,7 +260,18 @@ const ChartPanel: React.FC = () => {
   // -------------------- DRAW MARKET EVENTS -------------------- //
   const drawMarketEvent = (data: any) => {
     if (!chartRef.current) return;
-    if (data.timeframe?.toLowerCase() !== tfRef.current.toLowerCase()) return;
+
+    // Debug: BOS/CHOCH 5m
+    if (data.events && data.events.some((e: any) => (e.type === 'BOS' || e.type === 'CHOCH') && data.timeframe === '5m')) {
+      console.log('👀 [ChartPanel] drawMarketEvent called for 5m BOS/CHOCH. TF Check:', data.timeframe, 'vs', tfRef.current);
+    }
+
+    if (data.timeframe?.toLowerCase() !== tfRef.current.toLowerCase()) {
+      if (data.events && data.events.some((e: any) => (e.type === 'BOS' || e.type === 'CHOCH') && data.timeframe === '5m')) {
+        console.warn('❌ [ChartPanel] Skipped 5m BOS/CHOCH due to TF mismatch in drawMarketEvent:', data.timeframe, tfRef.current);
+      }
+      return;
+    }
 
     const events = Array.isArray(data.events)
       ? data.events
@@ -285,6 +296,7 @@ const ChartPanel: React.FC = () => {
   // draw BOS
   const drawBOS = (event: any) => {
     if (!chartRef.current) return;
+    if (tfRef.current === '5m') console.log('✅ [ChartPanel] drawBOS (5m) triggered:', event);
 
     const candleSeconds = TF_SECONDS[tfRef.current];
     const lengthSeconds = candleSeconds * 7; // ✅ next 7 candles
@@ -326,6 +338,7 @@ const ChartPanel: React.FC = () => {
   // draw CHOCH
   const drawCHOCH = (event: any) => {
     if (!chartRef.current) return;
+    if (tfRef.current === '5m') console.log('✅ [ChartPanel] drawCHOCH (5m) triggered:', event);
 
     const candleSeconds = TF_SECONDS[tfRef.current];
     const lengthSeconds = candleSeconds * 7; // ✅ next 7 candles
@@ -558,31 +571,31 @@ const ChartPanel: React.FC = () => {
     const price = event.POI_TAP;
 
     const tapSeries = chartRef.current.addLineSeries({
-        color: '#22c55e', 
-        lineWidth: 0,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        crosshairMarkerVisible: false,
-        pointMarkersVisible: true,
-        pointMarkersRadius: 7,
+      color: '#22c55e',
+      lineWidth: 0,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+      pointMarkersVisible: true,
+      pointMarkersRadius: 7,
     });
 
     tapSeries.setMarkers([
-        {
+      {
         time: time as UTCTimestamp,
         position: 'belowBar',
         color: '#22c55e',
         shape: 'diamond',
         text: 'POI TAP',
-        },
+      },
     ]);
 
     tapSeries.setData([
-        { time: time as UTCTimestamp, value: price },
+      { time: time as UTCTimestamp, value: price },
     ]);
 
     return tapSeries;
- };
+  };
 
   // draw TRADE PLAN
   const drawTradePlan = (event: any) => {
@@ -768,15 +781,31 @@ const ChartPanel: React.FC = () => {
         const ev = queue.shift()!;
         if (!ev.id) continue;
 
+        const is5mStruct = (ev.type === 'BOS' || ev.type === 'CHOCH') && (ev.timeframe === '5m' || ev.tf === '5m');
+        if (is5mStruct) {
+          console.log(`🔍 [ChartPanel] Processing 5m ${ev.type} from queue:`, ev);
+        }
+
         // Ensure the event exists in permanent store before rendering
-        if (!storeIds.has(ev.id)) continue;
+        if (!storeIds.has(ev.id)) {
+          if (is5mStruct) console.warn(`❌ [ChartPanel] 5m ${ev.type} skipped: Not in storeIds`, ev.id);
+          continue;
+        }
 
         // TF guard
-        if ((ev.timeframe ?? ev.tf ?? '').toString().toLowerCase() !== tf.toLowerCase()) continue;
+        if ((ev.timeframe ?? ev.tf ?? '').toString().toLowerCase() !== tf.toLowerCase()) {
+          if (is5mStruct) console.warn(`❌ [ChartPanel] 5m ${ev.type} skipped: Timeframe mismatch`, ev.timeframe, tf);
+          continue;
+        }
 
         // duplicate guard
-        if (drawnEventIdsRef.current.has(ev.id)) continue;
+        if (drawnEventIdsRef.current.has(ev.id)) {
+          if (is5mStruct) console.warn(`❌ [ChartPanel] 5m ${ev.type} skipped: Already drawn`, ev.id);
+          continue;
+        }
 
+        // if (ev.type === 'TRADE_PLAN') console.log('✅ [ChartPanel] Dispatching TRADE_PLAN to drawMarketEvent');
+        if (is5mStruct) console.log(`✅ [ChartPanel] Dispatching 5m ${ev.type} to drawMarketEvent`);
         drawMarketEvent({ symbol: pair, timeframe: tf, events: [ev] });
         drawnEventIdsRef.current.add(ev.id);
       }

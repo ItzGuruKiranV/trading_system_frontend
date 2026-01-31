@@ -179,6 +179,13 @@ class MarketSocketManager {
             storeEvents[symbol].push(obj);
             renderQueue[symbol].push(obj);
             added = true;
+
+    const tf = (packet.timeframe || "").toLowerCase().trim();
+    console.log("🔥 STORED EVENT:", symbol, tf);
+    if (symbol === "EURUSD" && tf === "5m") {
+        console.log("🔥 EURUSD 5m STORED EVENT:", obj);
+    }
+
         });
 
         if (added) {
@@ -223,4 +230,3 @@ export function subscribeToCandlesLoaded(cb: () => void) {
 export function getStoreEvents(pair: Pair) {
     return storeEvents[pair];
 }
-
