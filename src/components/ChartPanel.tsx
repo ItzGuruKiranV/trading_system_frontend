@@ -276,6 +276,7 @@ const ChartPanel: React.FC = () => {
       if (event.type === 'POI-LIQ') series = drawPOILIQ(event);
       if (event.type === 'RETRACEMENT') drawRetracement(event);
       if (event.type === 'TRADE_PLAN') drawTradePlan(event);
+      if (event.type === 'POI-TAP') series = drawPOITAP(event);
 
       if (series) marketSeriesRef.current.push(series);
     }
@@ -288,7 +289,7 @@ const ChartPanel: React.FC = () => {
     const candleSeconds = TF_SECONDS[tfRef.current];
     const lengthSeconds = candleSeconds * 7; // ✅ next 7 candles
 
-    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const startTime = Math.floor(new Date(event.time + 'Z').getTime() / 1000);
     const endTime = startTime + lengthSeconds;
     const midTime = startTime + Math.floor(lengthSeconds / 2);
 
@@ -329,7 +330,7 @@ const ChartPanel: React.FC = () => {
     const candleSeconds = TF_SECONDS[tfRef.current];
     const lengthSeconds = candleSeconds * 7; // ✅ next 7 candles
 
-    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const startTime = Math.floor(new Date(event.time + 'Z').getTime() / 1000);
     const endTime = startTime + lengthSeconds;
     const midTime = startTime + Math.floor(lengthSeconds / 2);
 
@@ -430,7 +431,7 @@ const ChartPanel: React.FC = () => {
     const candleSeconds = TF_SECONDS[tfRef.current];
     const lengthSeconds = candleSeconds * 10;
 
-    const startTime = Math.floor(new Date(event.time).getTime() / 1000);
+    const startTime = Math.floor(new Date(event.time + 'Z').getTime() / 1000);
     const price = event.price;
 
     const series = chartRef.current.addLineSeries({
@@ -548,6 +549,40 @@ const ChartPanel: React.FC = () => {
       midLine
     );
   };
+
+  // draw POI TAP
+  const drawPOITAP = (event: any) => {
+    if (!chartRef.current) return;
+
+    const time = Math.floor(new Date(event.time).getTime() / 1000);
+    const price = event.POI_TAP;
+
+    const tapSeries = chartRef.current.addLineSeries({
+        color: '#22c55e', 
+        lineWidth: 0,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        pointMarkersVisible: true,
+        pointMarkersRadius: 7,
+    });
+
+    tapSeries.setMarkers([
+        {
+        time: time as UTCTimestamp,
+        position: 'belowBar',
+        color: '#22c55e',
+        shape: 'diamond',
+        text: 'POI TAP',
+        },
+    ]);
+
+    tapSeries.setData([
+        { time: time as UTCTimestamp, value: price },
+    ]);
+
+    return tapSeries;
+ };
 
   // draw TRADE PLAN
   const drawTradePlan = (event: any) => {

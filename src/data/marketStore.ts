@@ -93,34 +93,67 @@ class MarketSocketManager {
     // 👇 NEW: change trigger for UI updates
     private version = 0;
 
+    // ✅ NEW: connection guards
+    private isConnecting: Record<Pair, boolean> = {
+        EURUSD: false,
+        GBPJPY: false,
+    };
+
+    private isConnected: Record<Pair, boolean> = {
+        EURUSD: false,
+        GBPJPY: false,
+    };
+
     constructor() {
-        // Wait CSV to load, then init WS
         loadAllCandlesOnce().then(() => {
             this.PAIRS.forEach(pair => this.initMarketWS(pair));
         });
     }
 
     private initMarketWS(pair: Pair) {
-        console.log(`[DEBUG initmarketws] Initializing WS for ${pair}`);
-        this.marketWS[pair] = new WebSocket(
+        if (this.isConnecting[pair] || this.isConnected[pair]) return;
+
+        console.log(`[WS] Attempting connection for ${pair}...`);
+        this.isConnecting[pair] = true;
+
+        const ws = new WebSocket(
             `${API_BASE_URL.replace('http', 'ws')}/ws/market/${pair}`
         );
-        this.marketWS[pair].onopen = () => {
-            console.log(`[DEBUG initmarketws] WS connected for ${pair}`);
+
+        this.marketWS[pair] = ws;
+
+        ws.onopen = () => {
+            console.log(`[WS] Connected for ${pair}`);
+            this.isConnected[pair] = true;
+            this.isConnecting[pair] = false;
         };
 
-        // ✅ Use same handler everywhere
-        this.marketWS[pair].onmessage = this.handleMessage.bind(this);
-        
+        ws.onmessage = (event) => {
+            console.log(`[WS RAW ${pair}]`, event.data);
 
-        this.marketWS[pair].onclose = () => {
-            console.log(`Market WS ${pair} disconnected, reconnecting in 3s...`);
-            setTimeout(() => this.reconnectMarketWS(pair), 3000);
-        };
-        this.marketWS[pair].onerror = (err) => {
-            console.error(`[DEBUG initmarketws] WS error for ${pair}:`, err);
+            try {
+                const parsed = JSON.parse(event.data);
+                console.log(`[WS PARSED ${pair}]`, parsed);
+            } catch {
+                console.warn(`[WS ${pair}] Non-JSON message`);
+            }
+
+            this.handleMessage(event);
         };
 
+        ws.onclose = () => {
+            console.log(`[WS] Disconnected for ${pair}`);
+            this.isConnected[pair] = false;
+            this.isConnecting[pair] = false;
+
+            setTimeout(() => {
+                this.initMarketWS(pair);
+            }, 3000);
+        };
+
+        ws.onerror = (err) => {
+            console.error(`[WS ERROR ${pair}]`, err);
+        };
     }
 
     private handleMessage(e: MessageEvent) {
@@ -143,12 +176,8 @@ class MarketSocketManager {
                 timeframe: packet.timeframe,
             };
 
-            // ✅ permanent
             storeEvents[symbol].push(obj);
-
-            // ✅ one-time draw
             renderQueue[symbol].push(obj);
-
             added = true;
         });
 
@@ -157,34 +186,17 @@ class MarketSocketManager {
         }
     }
 
-
-    private reconnectMarketWS(pair: Pair) {
-        this.marketWS[pair] = new WebSocket(
-            `${API_BASE_URL.replace('http', 'ws')}/ws/market/${pair}`
-        );
-
-        // ✅ Reuse same logic (no divergence bugs)
-        this.marketWS[pair].onmessage = this.handleMessage.bind(this);
-
-        this.marketWS[pair].onclose = () => {
-            console.log(`Market WS ${pair} disconnected, reconnecting in 3s...`);
-            setTimeout(() => this.reconnectMarketWS(pair), 3000);
-        };
-    }
-
-    /* ---------- UI SUBSCRIPTIONS ---------- */
-
     subscribeUI(fn: () => void) {
         this.listeners.add(fn);
         return () => this.listeners.delete(fn);
     }
 
     private emit() {
-        // 👇 force change awareness
         this.version++;
         this.listeners.forEach(fn => fn());
     }
 }
+
 
 /* ================= SINGLETON ================= */
 
