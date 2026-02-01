@@ -5,34 +5,85 @@ import { Target, AlertTriangle, BarChart3, TrendingUp } from 'lucide-react';
 import { API_BASE_URL } from '@/config/api';
 
 const Backtests: React.FC = () => {
-  const [selectedPair, setSelectedPair] = useState('EURUSD');
-  const [selectedYear, setSelectedYear] = useState('2024');
+  const [pairs, setPairs] = useState<string[]>([]);
+  const [selectedPair, setSelectedPair] = useState("");
+  const [selectedYear, setSelectedYear] = useState("");
   const [tradeData, setTradeData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingPairs, setLoadingPairs] = useState(true);
+  const [loadingTrades, setLoadingTrades] = useState(false);
+  const [years, setYears] = useState<number[]>([]);
 
+  // Fetch available pairs
   useEffect(() => {
-    const fetchTrades = async () => {
-      setLoading(true);
+    const fetchPairs = async () => {
+      setLoadingPairs(true);
       try {
-        const res = await fetch(`${API_BASE_URL}/backtest?pair=${selectedPair}&year=${selectedYear}`);
+        const res = await fetch(`${API_BASE_URL}/backtest/pairs`);
+        const data = await res.json();
+        setPairs(data);
+        if (data.length > 0) setSelectedPair("ALL");
+      } catch (err) {
+        console.error('Failed to load pairs', err);
+      } finally {
+        setLoadingPairs(false);
+      }
+    };
+    fetchPairs();
+  }, []);
+
+// Fetch years
+  useEffect(() => {
+    const fetchYears = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/backtest/years`);
+        const data: number[] = await res.json();
+        setYears(data);
+
+        // Only set default once if nothing selected yet
+        if (!selectedYear && data.length > 0) setSelectedYear("ALL");
+      } catch (err) {
+        console.error('Failed to load years', err);
+      }
+    };
+    fetchYears();
+  }, []);
+
+  // Fetch trades
+  useEffect(() => {
+    if (!selectedPair || !selectedYear) return;
+
+    const fetchTrades = async () => {
+      setLoadingTrades(true);
+      try {
+        // Convert year to int if not "ALL"
+        const yearParam = selectedYear === "ALL" ? "ALL" : parseInt(selectedYear, 10);
+        const res = await fetch(`${API_BASE_URL}/backtest/?pair=${selectedPair}&year=${yearParam}`);
         const data = await res.json();
         setTradeData(data);
       } catch (err) {
-        console.error("Error fetching trades:", err);
+        console.error('Error fetching trades:', err);
+        setTradeData(null);
       } finally {
-        setLoading(false);
+        setLoadingTrades(false);
       }
     };
-
     fetchTrades();
   }, [selectedPair, selectedYear]);
 
-  if (loading) return <p className="text-center py-8">Loading backtest data...</p>;
-  if (!tradeData) return <p className="text-center py-8">No data available.</p>;
+  // Show loading only for pairs fetch
+  if (loadingPairs) return <p className="text-center py-8">Loading pairs...</p>;
 
-  const stats = tradeData.stats;
-  const trades = tradeData.trades;
-  const equityCurve = tradeData.equityCurve ?? []; // in case backend sends it
+  const stats = tradeData?.stats ?? {
+    winRate: 0,
+    totalTrades: 0,
+    maxDrawdown: 0,
+    netProfit: 0,
+    averageWin: 0,
+    averageLoss: 0,
+  };
+  const trades = tradeData?.trades ?? [];
+  const equityCurve = tradeData?.equityCurve ?? [];
+
 
   return (
     <div className="min-h-screen p-6 lg:p-8">
@@ -48,10 +99,10 @@ const Backtests: React.FC = () => {
             <SelectValue placeholder="Select Pair" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="EURUSD">EURUSD</SelectItem>
-            <SelectItem value="GBPUSD">GBPUSD</SelectItem>
-            <SelectItem value="GBPJPY">GBPJPY</SelectItem>
-            {/* Add more pairs as needed */}
+            <SelectItem key="ALL" value="ALL">All Pairs</SelectItem>
+            {pairs.map((pair) => (
+              <SelectItem key={pair} value={pair}>{pair}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -60,11 +111,13 @@ const Backtests: React.FC = () => {
             <SelectValue placeholder="Year" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="2025">2025</SelectItem>
-            <SelectItem value="2024">2024</SelectItem>
-            <SelectItem value="2023">2023</SelectItem>
+            <SelectItem key="ALL" value="ALL">All Years</SelectItem>
+            {years.map((year) => (
+              <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
+
       </div>
 
       {/* Key Metrics */}
@@ -196,27 +249,36 @@ const Backtests: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {trades.map((trade) => (
-              <tr key={trade.id}>
-                <td className="font-mono text-sm">{trade.trade_date}</td>
-                <td className="font-medium">{trade.pair}</td>
-                <td>
-                  <span className={trade.side === 'BUY' ? 'text-success' : 'text-destructive'}>
-                    {trade.side}
-                  </span>
-                </td>
-                <td className="font-mono">{trade.entry}</td>
-                <td className="font-mono">{trade.exit}</td>
-                <td className={`font-mono font-semibold ${trade.pnl >= 0 ? 'text-success' : 'text-destructive'}`}>
-                  {trade.pnl >= 0 ? '+' : ''}${trade.pnl}
-                </td>
-                <td>
-                  <span className={trade.result === 'WIN' ? 'badge-success' : 'badge-destructive'}>
-                    {trade.result}
-                  </span>
+            {trades.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="text-center py-4 font-mono text-muted-foreground">
+                  No trade data available.
                 </td>
               </tr>
-            ))}
+            ) : (
+              trades.map((trade) => (
+                <tr key={trade.id}>
+                  <td className="font-mono text-sm">{trade.trade_date}</td>
+                  <td className="font-medium">{trade.pair}</td>
+                  <td>
+                    <span className={trade.side === 'BUY' ? 'text-success' : 'text-destructive'}>
+                      {trade.side}
+                    </span>
+                  </td>
+                  <td className="font-mono">{trade.entry}</td>
+                  <td className="font-mono">{trade.exit}</td>
+                  <td className={`font-mono font-semibold ${trade.pnl >= 0 ? 'text-success' : 'text-destructive'}`}>
+                    {trade.pnl >= 0 ? '+' : ''}${trade.pnl}
+                  </td>
+                  <td>
+                    <span className={trade.result === 'WIN' ? 'badge-success' : 'badge-destructive'}>
+                      {trade.result}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
+
           </tbody>
         </table>
       </div>
