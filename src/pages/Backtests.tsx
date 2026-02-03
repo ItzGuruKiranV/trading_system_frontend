@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Target, AlertTriangle, BarChart3, TrendingUp } from 'lucide-react';
+import { Target, BarChart3, TrendingUp } from 'lucide-react';
 import { API_BASE_URL } from '@/config/api';
 
 const Backtests: React.FC = () => {
@@ -31,15 +31,13 @@ const Backtests: React.FC = () => {
     fetchPairs();
   }, []);
 
-// Fetch years
+  // Fetch years
   useEffect(() => {
     const fetchYears = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/backtest/years`);
         const data: number[] = await res.json();
         setYears(data);
-
-        // Only set default once if nothing selected yet
         if (!selectedYear && data.length > 0) setSelectedYear("ALL");
       } catch (err) {
         console.error('Failed to load years', err);
@@ -55,7 +53,6 @@ const Backtests: React.FC = () => {
     const fetchTrades = async () => {
       setLoadingTrades(true);
       try {
-        // Convert year to int if not "ALL"
         const yearParam = selectedYear === "ALL" ? "ALL" : parseInt(selectedYear, 10);
         const res = await fetch(`${API_BASE_URL}/backtest/?pair=${selectedPair}&year=${yearParam}`);
         const data = await res.json();
@@ -70,20 +67,11 @@ const Backtests: React.FC = () => {
     fetchTrades();
   }, [selectedPair, selectedYear]);
 
-  // Show loading only for pairs fetch
   if (loadingPairs) return <p className="text-center py-8">Loading pairs...</p>;
 
-  const stats = tradeData?.stats ?? {
-    winRate: 0,
-    totalTrades: 0,
-    maxDrawdown: 0,
-    netProfit: 0,
-    averageWin: 0,
-    averageLoss: 0,
-  };
-  const trades = tradeData?.trades ?? [];
+  const stats = tradeData ?? {};
+  const recentTrades = tradeData?.recent_ten_trades ?? [];
   const equityCurve = tradeData?.equityCurve ?? [];
-
 
   return (
     <div className="min-h-screen p-6 lg:p-8">
@@ -117,7 +105,6 @@ const Backtests: React.FC = () => {
             ))}
           </SelectContent>
         </Select>
-
       </div>
 
       {/* Key Metrics */}
@@ -126,7 +113,7 @@ const Backtests: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground mb-1">Win Rate</p>
-              <p className="text-2xl font-bold font-mono text-success">{stats.winRate}%</p>
+              <p className="text-2xl font-bold font-mono text-success">{stats.win_rate ?? 0}%</p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-success/20 flex items-center justify-center">
               <Target className="w-5 h-5 text-success" />
@@ -138,7 +125,7 @@ const Backtests: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground mb-1">Total Trades</p>
-              <p className="text-2xl font-bold font-mono text-foreground">{stats.totalTrades}</p>
+              <p className="text-2xl font-bold font-mono text-foreground">{stats.total_trades ?? 0}</p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
               <BarChart3 className="w-5 h-5 text-primary" />
@@ -149,11 +136,11 @@ const Backtests: React.FC = () => {
         <div className="stat-card">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground mb-1">Max Drawdown</p>
-              <p className="text-2xl font-bold font-mono text-destructive">{stats.maxDrawdown}$</p>
+              <p className="text-sm text-muted-foreground mb-1">Net PnL</p>
+              <p className="text-2xl font-bold font-mono text-success">${stats.net_pnl ?? 0}</p>
             </div>
-            <div className="w-10 h-10 rounded-lg bg-destructive/20 flex items-center justify-center">
-              <AlertTriangle className="w-5 h-5 text-destructive" />
+            <div className="w-10 h-10 rounded-lg bg-success/20 flex items-center justify-center">
+              <TrendingUp className="w-5 h-5 text-success" />
             </div>
           </div>
         </div>
@@ -186,49 +173,31 @@ const Backtests: React.FC = () => {
         </div>
       )}
 
-      {/* Additional Stats */}
+      {/* Type-specific Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <div className="glass-card p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4">Trade Statistics</h2>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Net Profit</span>
-              <span className="font-mono font-semibold text-success">${stats.netProfit.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Average Win</span>
-              <span className="font-mono text-success">${stats.averageWin.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Average Loss</span>
-              <span className="font-mono text-destructive">${stats.averageLoss.toFixed(2)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-card p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4">Win/Loss Distribution</h2>
-          <div className="flex items-center gap-4 mb-4">
-            <div className="flex-1">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-success">Wins</span>
-                <span className="font-mono">{Math.round(stats.totalTrades * stats.winRate / 100)}</span>
+        {['pullback', 'choch'].map((type) => (
+          <div key={type} className="glass-card p-6">
+            <h2 className="text-lg font-semibold text-foreground mb-4">{type.toUpperCase()}</h2>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Total Trades</span>
+                <span className="font-mono font-semibold text-foreground">{stats[type]?.trades ?? 0}</span>
               </div>
-              <div className="h-4 bg-secondary rounded-full overflow-hidden">
-                <div className="h-full bg-success rounded-full" style={{ width: `${stats.winRate}%` }} />
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Wins</span>
+                <span className="font-mono text-success">{stats[type]?.win ?? 0}</span>
               </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-destructive">Losses</span>
-                <span className="font-mono">{Math.round(stats.totalTrades * (100 - stats.winRate) / 100)}</span>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Losses</span>
+                <span className="font-mono text-destructive">{stats[type]?.loss ?? 0}</span>
               </div>
-              <div className="h-4 bg-secondary rounded-full overflow-hidden">
-                <div className="h-full bg-destructive rounded-full" style={{ width: `${100 - stats.winRate}%` }} />
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Win Rate</span>
+                <span className="font-mono font-semibold text-success">{stats[type]?.win_rate ?? 0}%</span>
               </div>
             </div>
           </div>
-        </div>
+        ))}
       </div>
 
       {/* Recent Trades */}
@@ -246,17 +215,18 @@ const Backtests: React.FC = () => {
               <th>Exit</th>
               <th>P&L</th>
               <th>Result</th>
+              <th>Trade Type</th>
             </tr>
           </thead>
           <tbody>
-            {trades.length === 0 ? (
+            {recentTrades.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center py-4 font-mono text-muted-foreground">
                   No trade data available.
                 </td>
               </tr>
             ) : (
-              trades.map((trade) => (
+              recentTrades.map((trade) => (
                 <tr key={trade.id}>
                   <td className="font-mono text-sm">{trade.trade_date}</td>
                   <td className="font-medium">{trade.pair}</td>
@@ -266,7 +236,7 @@ const Backtests: React.FC = () => {
                     </span>
                   </td>
                   <td className="font-mono">{trade.entry}</td>
-                  <td className="font-mono">{trade.exit}</td>
+                  <td className="font-mono">{trade.exit_price}</td>
                   <td className={`font-mono font-semibold ${trade.pnl >= 0 ? 'text-success' : 'text-destructive'}`}>
                     {trade.pnl >= 0 ? '+' : ''}${trade.pnl}
                   </td>
@@ -275,10 +245,11 @@ const Backtests: React.FC = () => {
                       {trade.result}
                     </span>
                   </td>
+                  <td className="font-mono">{trade.trade_type}</td>
+
                 </tr>
               ))
             )}
-
           </tbody>
         </table>
       </div>
